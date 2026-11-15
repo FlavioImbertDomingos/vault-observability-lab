@@ -37,7 +37,7 @@ All taken from a running lab.
 Requirements: Docker Desktop (Mac, Windows) or Docker Engine with Compose (Linux), at least 6 GB of memory for Docker, about 6 GB of disk. Intel and Apple Silicon both work. On Linux also run `sudo sysctl -w vm.max_map_count=262144`.
 
 ```bash
-git clone https://github.com/<you>/vault-observability-lab.git
+git clone https://github.com/flavioimbertdomingos/vault-observability-lab.git
 cd vault-observability-lab
 ./lab.sh up          # first run: 3 to 6 minutes
 ./lab.sh status
