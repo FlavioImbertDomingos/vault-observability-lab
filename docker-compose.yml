@@ -1,0 +1,239 @@
+# Vault observability lab: 3-node Vault Raft cluster, Prometheus, Grafana, Wazuh SIEM.
+# Start with ./lab.sh up  (it generates the Wazuh certificates on first run).
+# LAB ONLY: TLS off on Vault, one unseal key, default Wazuh passwords.
+# Host ports can be changed in a .env file next to this one (see .env.example).
+
+name: vault-lab
+
+x-vault-node: &vault-node
+  image: hashicorp/vault:${VAULT_VERSION:-1.19.5}
+  command: server
+  restart: unless-stopped
+  cap_add: [IPC_LOCK]
+  environment: &vault-env
+    VAULT_ADDR: http://127.0.0.1:8200
+  healthcheck:
+    # 0 = unsealed, 2 = sealed: both mean the server process is up
+    test: ["CMD-SHELL", "vault status >/dev/null 2>&1; [ $$? -ne 1 ]"]
+    interval: 5s
+    retries: 30
+
+x-vault-client: &vault-client
+  image: hashicorp/vault:${VAULT_VERSION:-1.19.5}
+  entrypoint: ["/bin/sh"]
+  volumes:
+    - ./vault/scripts:/scripts:ro
+    - ./secrets:/secrets
+
+services:
+  # ---------------------------------------------------------------- Vault
+  vault-1:
+    <<: *vault-node
+    hostname: vault-1
+    ports: ["${VAULT_PORT:-8200}:8200"]
+    environment:
+      <<: *vault-env
+      VAULT_RAFT_NODE_ID: vault-1
+      VAULT_API_ADDR: http://vault-1:8200
+      VAULT_CLUSTER_ADDR: http://vault-1:8201
+    # vault-audit holds the audit log and the three server logs; Wazuh reads it
+    volumes: [./vault/config/vault.hcl:/vault/config/vault.hcl:ro, ./vault/nodes/vault-1.hcl:/vault/config/node.hcl:ro, vault-audit:/vault/logs, vault-1-data:/vault/file]
+
+  vault-2:
+    <<: *vault-node
+    hostname: vault-2
+    ports: ["${VAULT2_PORT:-8210}:8200"]
+    environment:
+      <<: *vault-env
+      VAULT_RAFT_NODE_ID: vault-2
+      VAULT_API_ADDR: http://vault-2:8200
+      VAULT_CLUSTER_ADDR: http://vault-2:8201
+    volumes: [./vault/config/vault.hcl:/vault/config/vault.hcl:ro, ./vault/nodes/vault-2.hcl:/vault/config/node.hcl:ro, vault-audit:/vault/logs, vault-2-data:/vault/file]
+
+  vault-3:
+    <<: *vault-node
+    hostname: vault-3
+    ports: ["${VAULT3_PORT:-8220}:8200"]
+    environment:
+      <<: *vault-env
+      VAULT_RAFT_NODE_ID: vault-3
+      VAULT_API_ADDR: http://vault-3:8200
+      VAULT_CLUSTER_ADDR: http://vault-3:8201
+    volumes: [./vault/config/vault.hcl:/vault/config/vault.hcl:ro, ./vault/nodes/vault-3.hcl:/vault/config/node.hcl:ro, vault-audit:/vault/logs, vault-3-data:/vault/file]
+
+  vault-init:                     # runs once per "up": init on first run, unseal every run
+    <<: *vault-client
+    command: ["/scripts/init.sh"]
+    restart: "no"
+    depends_on:
+      vault-1: { condition: service_healthy }
+      vault-2: { condition: service_healthy }
+      vault-3: { condition: service_healthy }
+
+  loadgen:
+    <<: *vault-client
+    command: ["/scripts/loadgen.sh"]
+    restart: unless-stopped
+    environment:
+      LOADGEN_SLEEP: ${LOADGEN_SLEEP:-3}
+    depends_on:
+      vault-init: { condition: service_completed_successfully }
+
+  # ----------------------------------------------------------- Metrics
+  prometheus:
+    image: quay.io/prometheus/prometheus:${PROMETHEUS_VERSION:-v3.16.0}
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+      - --web.enable-lifecycle
+    ports: ["${PROMETHEUS_PORT:-9090}:9090"]
+    volumes:
+      - ./prometheus:/etc/prometheus:ro
+      - prometheus-data:/prometheus
+
+  grafana:
+    image: grafana/grafana:${GRAFANA_VERSION:-13.2.6}
+    restart: unless-stopped
+    ports: ["${GRAFANA_PORT:-3000}:3000"]
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-vaultlab}
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/vault-overview.json
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on: [prometheus]
+
+  # Keeps the shared audit log from filling the disk: copy + truncate above AUDIT_MAX_MB.
+  # Vault opens the file in append mode, so truncation is safe; Wazuh notices and re-reads.
+  audit-rotate:
+    image: hashicorp/vault:${VAULT_VERSION:-1.19.5}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while true; do
+          f=/vault/logs/audit.log
+          if [ -f $$f ] && [ $$(du -m $$f | cut -f1) -ge $${AUDIT_MAX_MB:-200} ]; then
+            cp $$f $$f.1 && : > $$f && echo "rotated audit.log"
+          fi
+          sleep 300
+        done
+    environment:
+      AUDIT_MAX_MB: ${AUDIT_MAX_MB:-200}
+    volumes: [vault-audit:/vault/logs]
+    restart: unless-stopped
+
+  # ----------------------------------------------------------------- SIEM
+  # Based on wazuh/wazuh-docker v4.14.10 single-node (GPLv2). Certificates are generated
+  # by ./lab.sh up on first run into wazuh/config/wazuh_indexer_ssl_certs.
+  wazuh.manager:
+    image: wazuh/wazuh-manager:${WAZUH_VERSION:-4.14.10}
+    hostname: wazuh.manager
+    restart: unless-stopped
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile: { soft: 655360, hard: 655360 }
+    ports:
+      - "${WAZUH_AGENT_PORT:-1514}:1514"     # agents (optional: enroll your laptop or VMs later)
+      - "${WAZUH_ENROLL_PORT:-1515}:1515"
+    environment:
+      - INDEXER_URL=https://wazuh.indexer:9200
+      - INDEXER_USERNAME=admin
+      - INDEXER_PASSWORD=SecretPassword
+      - FILEBEAT_SSL_VERIFICATION_MODE=full
+      - SSL_CERTIFICATE_AUTHORITIES=/etc/ssl/root-ca.pem
+      - SSL_CERTIFICATE=/etc/ssl/filebeat.pem
+      - SSL_KEY=/etc/ssl/filebeat.key
+      - API_USERNAME=wazuh-wui
+      - API_PASSWORD=MyS3cr37P450r.*-
+    volumes:
+      - wazuh_api_configuration:/var/ossec/api/configuration
+      - wazuh_etc:/var/ossec/etc
+      - wazuh_logs:/var/ossec/logs
+      - wazuh_queue:/var/ossec/queue
+      - wazuh_var_multigroups:/var/ossec/var/multigroups
+      - wazuh_integrations:/var/ossec/integrations
+      - wazuh_active_response:/var/ossec/active-response/bin
+      - wazuh_agentless:/var/ossec/agentless
+      - wazuh_wodles:/var/ossec/wodles
+      - filebeat_etc:/etc/filebeat
+      - filebeat_var:/var/lib/filebeat
+      - ./wazuh/config/wazuh_indexer_ssl_certs/root-ca-manager.pem:/etc/ssl/root-ca.pem
+      - ./wazuh/config/wazuh_indexer_ssl_certs/wazuh.manager.pem:/etc/ssl/filebeat.pem
+      - ./wazuh/config/wazuh_indexer_ssl_certs/wazuh.manager-key.pem:/etc/ssl/filebeat.key
+      - ./wazuh/config/wazuh_cluster/wazuh_manager.conf:/wazuh-config-mount/etc/ossec.conf
+      # mounted in place so edits apply on "docker compose restart wazuh.manager"
+      - ./wazuh/rules/vault_rules.xml:/var/ossec/etc/rules/vault_rules.xml:ro
+      - vault-audit:/var/log/vault:ro          # Vault audit log + server logs
+    depends_on:
+      wazuh.indexer: { condition: service_started }
+      # start after Vault created audit.log, so logcollector picks it up from the first line
+      vault-init: { condition: service_completed_successfully }
+
+  wazuh.indexer:
+    image: wazuh/wazuh-indexer:${WAZUH_VERSION:-4.14.10}
+    hostname: wazuh.indexer
+    restart: unless-stopped
+    environment:
+      - "OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g"
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile: { soft: 65536, hard: 65536 }
+    volumes:
+      - wazuh-indexer-data:/var/lib/wazuh-indexer
+      - ./wazuh/config/wazuh_indexer_ssl_certs/root-ca.pem:/usr/share/wazuh-indexer/config/certs/root-ca.pem
+      - ./wazuh/config/wazuh_indexer_ssl_certs/wazuh.indexer-key.pem:/usr/share/wazuh-indexer/config/certs/wazuh.indexer.key
+      - ./wazuh/config/wazuh_indexer_ssl_certs/wazuh.indexer.pem:/usr/share/wazuh-indexer/config/certs/wazuh.indexer.pem
+      - ./wazuh/config/wazuh_indexer_ssl_certs/admin.pem:/usr/share/wazuh-indexer/config/certs/admin.pem
+      - ./wazuh/config/wazuh_indexer_ssl_certs/admin-key.pem:/usr/share/wazuh-indexer/config/certs/admin-key.pem
+      - ./wazuh/config/wazuh_indexer/wazuh.indexer.yml:/usr/share/wazuh-indexer/config/opensearch.yml
+      - ./wazuh/config/wazuh_indexer/internal_users.yml:/usr/share/wazuh-indexer/config/opensearch-security/internal_users.yml
+
+  wazuh.dashboard:
+    image: wazuh/wazuh-dashboard:${WAZUH_VERSION:-4.14.10}
+    hostname: wazuh.dashboard
+    restart: unless-stopped
+    ports:
+      - "${WAZUH_PORT:-8443}:5601"
+    environment:
+      - INDEXER_USERNAME=admin
+      - INDEXER_PASSWORD=SecretPassword
+      - WAZUH_API_URL=https://wazuh.manager
+      - DASHBOARD_USERNAME=kibanaserver
+      - DASHBOARD_PASSWORD=kibanaserver
+      - API_USERNAME=wazuh-wui
+      - API_PASSWORD=MyS3cr37P450r.*-
+    volumes:
+      - ./wazuh/config/wazuh_indexer_ssl_certs/wazuh.dashboard.pem:/usr/share/wazuh-dashboard/certs/wazuh-dashboard.pem
+      - ./wazuh/config/wazuh_indexer_ssl_certs/wazuh.dashboard-key.pem:/usr/share/wazuh-dashboard/certs/wazuh-dashboard-key.pem
+      - ./wazuh/config/wazuh_indexer_ssl_certs/root-ca.pem:/usr/share/wazuh-dashboard/certs/root-ca.pem
+      - ./wazuh/config/wazuh_dashboard/opensearch_dashboards.yml:/usr/share/wazuh-dashboard/config/opensearch_dashboards.yml
+      - ./wazuh/config/wazuh_dashboard/wazuh.yml:/usr/share/wazuh-dashboard/data/wazuh/config/wazuh.yml
+      - wazuh-dashboard-config:/usr/share/wazuh-dashboard/data/wazuh/config
+      - wazuh-dashboard-custom:/usr/share/wazuh-dashboard/plugins/wazuh/public/assets/custom
+    depends_on: [wazuh.indexer, wazuh.manager]
+
+volumes:
+  vault-audit:
+  vault-1-data:
+  vault-2-data:
+  vault-3-data:
+  prometheus-data:
+  grafana-data:
+  wazuh_api_configuration:
+  wazuh_etc:
+  wazuh_logs:
+  wazuh_queue:
+  wazuh_var_multigroups:
+  wazuh_integrations:
+  wazuh_active_response:
+  wazuh_agentless:
+  wazuh_wodles:
+  filebeat_etc:
+  filebeat_var:
+  wazuh-indexer-data:
+  wazuh-dashboard-config:
+  wazuh-dashboard-custom:

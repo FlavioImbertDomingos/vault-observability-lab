@@ -1,0 +1,18 @@
+Vault observability lab
+Copyright (c) 2026 Flavio Domingos. Licensed under the MIT License (see LICENSE),
+except for the third-party files listed below.
+
+wazuh/config/wazuh_cluster/wazuh_manager.conf
+wazuh/config/wazuh_indexer/wazuh.indexer.yml
+wazuh/config/wazuh_indexer/internal_users.yml
+wazuh/config/wazuh_dashboard/opensearch_dashboards.yml
+wazuh/config/wazuh_dashboard/wazuh.yml
+  Adapted from wazuh/wazuh-docker v4.14.10 (single-node), Copyright (C) Wazuh Inc.,
+  licensed under GPLv2. https://github.com/wazuh/wazuh-docker
+  Changes: Vault audit and server log inputs, vulnerability detection disabled.
+
+docs/vendor/three.module.min.js, docs/vendor/OrbitControls.js, docs/vendor/CSS2DRenderer.js
+  three.js r170, Copyright 2010-2024 three.js authors, MIT License (docs/vendor/THREE-LICENSE.txt).
+
+HashiCorp Vault, Prometheus, Grafana and Wazuh are trademarks of their respective owners.
+Container images are pulled from their publishers and are not redistributed here.

@@ -1,0 +1,196 @@
+<!--
+  Wazuh rules for HashiCorp Vault audit logs (file audit device, JSON).
+  The manager reads /var/log/vault/audit.log with log_format json (see wazuh_manager.conf).
+  Vault writes a "request" and a "response" line per call; the rules alert on responses
+  so every call is counted once. Level 0 = decoded but not stored as an alert.
+  When several child rules match, Wazuh keeps the highest level, so levels are chosen
+  so that the more specific finding wins (policy change by root shows as a policy change).
+  Server (operational) logs are read too: rules 1002xx. Some events, such as rekey,
+  never reach the audit log because those endpoints are unauthenticated.
+-->
+<group name="vault,">
+
+  <!-- base: any Vault audit line -->
+  <rule id="100100" level="0">
+    <decoded_as>json</decoded_as>
+    <field name="type" type="pcre2">^(request|response)$</field>
+    <field name="request.path" type="pcre2">.</field>
+    <description>Vault audit event</description>
+  </rule>
+
+  <rule id="100101" level="0">
+    <if_sid>100100</if_sid>
+    <field name="type">^response$</field>
+    <description>Vault: $(request.operation) $(request.path)</description>
+  </rule>
+
+  <!-- authentication -->
+  <rule id="100110" level="5">
+    <if_sid>100101</if_sid>
+    <field name="request.path" type="pcre2">^auth/.+/login</field>
+    <field name="error" type="pcre2">.</field>
+    <description>Vault: failed login on $(request.path) from $(request.remote_address)</description>
+    <mitre><id>T1110</id></mitre>
+    <group>authentication_failed,pci_dss_10.2.4,pci_dss_10.2.5,</group>
+  </rule>
+
+  <rule id="100111" level="10" frequency="6" timeframe="120">
+    <if_matched_sid>100110</if_matched_sid>
+    <same_field>request.path</same_field>
+    <description>Vault: possible brute force, 6+ failed logins on $(request.path) in 2 minutes</description>
+    <mitre><id>T1110</id></mitre>
+    <group>authentication_failures,pci_dss_11.4,pci_dss_10.2.4,</group>
+  </rule>
+
+  <!-- authorization -->
+  <rule id="100120" level="5">
+    <if_sid>100101</if_sid>
+    <field name="error" type="pcre2">permission denied</field>
+    <field name="request.path" type="pcre2">^(?!auth/.+/login)</field>
+    <description>Vault: permission denied for $(auth.display_name) on $(request.path)</description>
+    <group>access_denied,pci_dss_10.2.4,</group>
+  </rule>
+
+  <rule id="100121" level="9" frequency="5" timeframe="60">
+    <if_matched_sid>100120</if_matched_sid>
+    <same_field>auth.display_name</same_field>
+    <description>Vault: $(auth.display_name) denied 5+ times in 1 minute (probing)</description>
+    <mitre><id>T1083</id></mitre>
+    <group>access_denied,</group>
+  </rule>
+
+  <!-- needs: vault write sys/quotas/config enable_rate_limit_audit_logging=true
+       (rejected requests only produce a "request" line, so this hangs off 100100) -->
+  <rule id="100125" level="6">
+    <if_sid>100100</if_sid>
+    <field name="error" type="pcre2">(?i)rate limit quota exceeded</field>
+    <description>Vault: rate limit quota exceeded on $(request.path)</description>
+    <group>vault_quota,</group>
+  </rule>
+
+  <!-- privileged and configuration endpoints -->
+  <rule id="100140" level="10">
+    <if_sid>100101</if_sid>
+    <field name="request.path" type="pcre2">^sys/(generate-root|rekey|rekey-recovery-key|rotate|seal|step-down|raw|replication)</field>
+    <description>Vault: privileged endpoint $(request.operation) $(request.path) from $(request.remote_address) $(auth.display_name)</description>
+    <mitre><id>T1098</id></mitre>
+    <group>vault_privileged,pci_dss_10.2.2,</group>
+  </rule>
+
+  <rule id="100141" level="12">
+    <if_sid>100101</if_sid>
+    <field name="request.path" type="pcre2">^sys/audit/</field>
+    <field name="request.operation" type="pcre2">^(update|create|delete)$</field>
+    <description>Vault: audit device changed ($(request.operation) $(request.path))</description>
+    <mitre><id>T1562.008</id></mitre>
+    <group>vault_privileged,pci_dss_10.5.2,</group>
+  </rule>
+
+  <rule id="100142" level="9">
+    <if_sid>100101</if_sid>
+    <field name="request.path" type="pcre2">^sys/(policy|policies/acl)/</field>
+    <field name="request.operation" type="pcre2">^(update|create|delete)$</field>
+    <description>Vault: policy changed ($(request.operation) $(request.path)) by $(auth.display_name)</description>
+    <mitre><id>T1098</id></mitre>
+    <group>vault_config,pci_dss_10.2.7,</group>
+  </rule>
+
+  <rule id="100143" level="9">
+    <if_sid>100101</if_sid>
+    <field name="request.path" type="pcre2">^sys/(auth|mounts)/</field>
+    <field name="request.operation" type="pcre2">^(update|create|delete)$</field>
+    <description>Vault: auth method or secrets engine changed ($(request.operation) $(request.path))</description>
+    <group>vault_config,</group>
+  </rule>
+
+  <!-- root token: listed last so the privileged rules above win when both match -->
+  <rule id="100131" level="12">
+    <if_sid>100101</if_sid>
+    <field name="response.auth.policies" type="pcre2">\broot\b</field>
+    <description>Vault: a new root token was issued via $(request.path)</description>
+    <mitre><id>T1078</id></mitre>
+    <group>vault_root,pci_dss_10.2.2,</group>
+  </rule>
+
+  <rule id="100130" level="8">
+    <if_sid>100101</if_sid>
+    <field name="auth.policies" type="pcre2">\broot\b</field>
+    <!-- skip the CLI's own preflight lookups -->
+    <field name="request.path" type="pcre2">^(?!sys/internal/ui/mounts)</field>
+    <description>Vault: root token used for $(request.operation) $(request.path)</description>
+    <mitre><id>T1078</id></mitre>
+    <group>vault_root,pci_dss_10.2.2,</group>
+  </rule>
+
+</group>
+
+<group name="vault,vault_server,">
+
+  <rule id="100200" level="0">
+    <decoded_as>json</decoded_as>
+    <field name="@module" type="pcre2">.</field>
+    <field name="@message" type="pcre2">.</field>
+    <description>Vault server log</description>
+  </rule>
+
+  <rule id="100201" level="5">
+    <if_sid>100200</if_sid>
+    <field name="@level">^error$</field>
+    <!-- join retries before the cluster is initialized are expected noise -->
+    <field name="@message" type="pcre2">^(?!failed to get raft challenge|failed to retry join raft cluster)</field>
+    <description>Vault server error: $(@message)</description>
+  </rule>
+
+  <rule id="100202" level="10">
+    <if_sid>100200</if_sid>
+    <field name="@message" type="pcre2">^(rekey initialized|root generation initialized|rekey canceled|root generation canceled)</field>
+    <description>Vault server: $(@message) (unseal/root key ceremony)</description>
+    <mitre><id>T1098</id></mitre>
+    <group>vault_privileged,</group>
+  </rule>
+
+  <rule id="100203" level="10">
+    <if_sid>100200</if_sid>
+    <field name="@message" type="pcre2">^vault is sealed</field>
+    <description>Vault server: a node was sealed</description>
+    <group>vault_availability,</group>
+  </rule>
+
+  <rule id="100204" level="6">
+    <if_sid>100200</if_sid>
+    <field name="@message" type="pcre2">^acquired lock, enabling active operation</field>
+    <description>Vault server: a node became the active node</description>
+    <group>vault_availability,</group>
+  </rule>
+
+  <rule id="100207" level="10">
+    <if_sid>100200</if_sid>
+    <field name="@message" type="pcre2">^login attempts exceeded, user is locked out</field>
+    <description>Vault server: user locked out after repeated failed logins</description>
+    <mitre><id>T1110</id></mitre>
+    <group>authentication_failures,</group>
+  </rule>
+
+  <!-- sys/step-down only writes a request line to the audit log, so watch the server log -->
+  <rule id="100208" level="7">
+    <if_sid>100200</if_sid>
+    <field name="@message" type="pcre2">^stepping down from active operation</field>
+    <description>Vault server: the active node stepped down</description>
+    <group>vault_availability,</group>
+  </rule>
+
+  <rule id="100206" level="7">
+    <if_sid>100200</if_sid>
+    <field name="@message" type="pcre2">^heartbeat timeout reached, starting election</field>
+    <description>Vault server: Raft leader lost, election started</description>
+    <group>vault_availability,</group>
+  </rule>
+
+  <rule id="100205" level="3">
+    <if_sid>100200</if_sid>
+    <field name="@message" type="pcre2">^(vault is unsealed|entering standby mode)</field>
+    <description>Vault server: $(@message)</description>
+    <group>vault_availability,</group>
+  </rule>
+
+</group>

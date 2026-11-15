@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vault observability lab: 3D architecture</title>
+<style>
+  :root { --bg:#0b0f17; --panel:#121826; --line:#243047; --text:#dbe4f3; --muted:#8a98b3;
+          --vault:#ffd814; --metrics:#4da3ff; --logs:#ff8a3d; --req:#3ddc97; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--text);
+               font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; }
+  #scene { position:fixed; inset:0; }
+  header { position:fixed; top:0; left:0; right:0; padding:16px 22px; pointer-events:none;
+           background:linear-gradient(var(--bg), rgba(11,15,23,0)); }
+  header h1 { margin:0; font-size:20px; font-weight:650; }
+  header p { margin:2px 0 0; color:var(--muted); max-width:720px; }
+  .toolbar { position:fixed; left:22px; bottom:22px; display:flex; gap:8px; flex-wrap:wrap; max-width:60vw; }
+  button { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:8px;
+           padding:8px 12px; font:inherit; cursor:pointer; }
+  button:hover { border-color:#3b4d70; }
+  button.on { border-color:var(--vault); }
+  .legend { position:fixed; right:22px; bottom:22px; background:rgba(18,24,38,.85); border:1px solid var(--line);
+            border-radius:10px; padding:10px 14px; }
+  .legend div { display:flex; align-items:center; gap:8px; }
+  .legend i { width:22px; height:3px; border-radius:2px; display:inline-block; }
+  #info { position:fixed; top:84px; right:22px; width:320px; max-height:calc(100vh - 220px); overflow:auto;
+          background:rgba(18,24,38,.94); border:1px solid var(--line); border-radius:12px; padding:16px 18px; }
+  #info h2 { margin:0 0 4px; font-size:17px; }
+  #info .tag { color:var(--muted); font-size:12px; margin-bottom:10px; }
+  #info ul { padding-left:18px; margin:6px 0; }
+  #info code { background:#0b1220; border:1px solid var(--line); border-radius:4px; padding:0 4px; font-size:12px; }
+  #info a { color:var(--metrics); }
+  .label { color:var(--text); font-size:12px; font-weight:600; padding:2px 7px; border-radius:6px;
+           background:rgba(11,15,23,.75); border:1px solid var(--line); white-space:nowrap; cursor:pointer; }
+  .label.zone { font-size:11px; font-weight:500; color:var(--muted); border:none; background:none; letter-spacing:.06em; text-transform:uppercase; }
+  .docs { position:fixed; top:16px; right:22px; display:flex; gap:12px; }
+  .docs a { color:var(--muted); text-decoration:none; }
+  .docs a:hover { color:var(--text); }
+  @media (max-width: 800px) { #info { width:auto; left:22px; top:auto; bottom:120px; max-height:40vh; } .docs { display:none; } }
+</style>
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js" } }</script>
+</head>
+<body>
+<div id="scene"></div>
+<header>
+  <h1>Vault observability lab</h1>
+  <p>Three Vault nodes on Raft, watched by Prometheus and Grafana for metrics and by Wazuh for audit and server logs. Drag to rotate, scroll to zoom, click a component.</p>
+</header>
+<nav class="docs">
+  <a href="architecture.md">Architecture</a><a href="metrics.md">Metrics</a><a href="siem.md">SIEM</a>
+  <a href="exercises.md">Exercises</a>
+</nav>
+<aside id="info"></aside>
+<div class="toolbar">
+  <button id="flows" class="on">Data flows</button>
+  <button id="failover">Simulate failover</button>
+  <button id="incident">Simulate incident</button>
+  <button id="spin">Auto-rotate</button>
+  <button id="reset">Reset view</button>
+</div>
+<div class="legend">
+  <div><i style="background:var(--req)"></i>client requests</div>
+  <div><i style="background:var(--vault)"></i>Raft replication</div>
+  <div><i style="background:var(--metrics)"></i>metrics (pull)</div>
+  <div><i style="background:var(--logs)"></i>audit and server logs</div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from './vendor/OrbitControls.js';
+import { CSS2DRenderer, CSS2DObject } from './vendor/CSS2DRenderer.js';
+
+const C = { vault:0xffd814, standby:0xb59a12, metrics:0x4da3ff, logs:0xff8a3d, req:0x3ddc97,
+            grafana:0xf46800, prom:0xe6522c, wazuh:0x3595f9, client:0x8a98b3, alert:0xff3d5a };
+
+const INFO = {
+  'vault-1': { tag:'hashicorp/vault:1.19.5 · port 8200', html:`
+    <p>One of three Vault servers using Integrated Storage (Raft). One node is <b>active</b>, the others are standbys that forward requests to it.</p>
+    <ul><li>Config: <code>vault/config/vault.hcl</code> + <code>vault/nodes/vault-1.hcl</code></li>
+    <li>Metrics: <code>/v1/sys/metrics?format=prometheus</code></li>
+    <li>Audit log and JSON server log on the shared volume</li></ul>
+    <p>Try: <code>docker compose stop vault-1</code> and watch the active node move.</p>` },
+  'vault-2': { tag:'hashicorp/vault:1.19.5 · port 8210', html:`<p>Raft voter. Joins vault-1 with <code>retry_join</code> on first unseal. Answers metrics even as a standby because the listener sets <code>unauthenticated_metrics_access</code>.</p>` },
+  'vault-3': { tag:'hashicorp/vault:1.19.5 · port 8220', html:`<p>Raft voter. With three voters the cluster keeps quorum when one node fails (autopilot fault tolerance = 1).</p>` },
+  'loadgen': { tag:'shell loop · every 3 s', html:`<p>Background traffic: userpass and AppRole logins, KV reads and writes, transit encrypt/decrypt, short-lived child tokens, an occasional wrong password, a forbidden read and a burst against the rate-limited mount.</p>` },
+  'incident.sh': { tag:'./lab.sh incident', html:`<p>Simulated attack: brute force (and lockout), root token use, a new root token, generate-root and rekey attempts, a policy change, repeated permission denied.</p>` },
+  'Prometheus': { tag:'prometheus v3.16.0 · port 9090', html:`<p>Scrapes every Vault node every 15 s and evaluates 11 alert rules based on HashiCorp's monitoring guidance: sealed node, no active node, leadership lost, Raft fault tolerance, audit failures, root token created, latency, GC pause, lease count, 429s.</p><p><code>prometheus/rules/vault-alerts.yml</code></p>` },
+  'Grafana': { tag:'grafana 13.2.6 · port 3000', html:`<p>"Vault overview" dashboard, provisioned automatically: cluster health, requests, usage and capacity, Raft storage and runtime. 42 panels.</p><p><code>grafana/build_dashboard.py</code> generates the JSON.</p>` },
+  'Shared volume': { tag:'docker volume vault-audit', html:`<p>Holds <code>audit.log</code> (file audit device, JSON, mode 0640) and <code>vault-1..3.log</code> (server logs, JSON). A sidecar rotates the audit log at 200 MB.</p><p>Some events, such as rekey, never reach the audit log because those endpoints are unauthenticated. The server log catches them.</p>` },
+  'Wazuh manager': { tag:'wazuh-manager 4.14.10', html:`<p>Reads the audit and server logs as JSON and applies 18 custom rules (1001xx audit, 1002xx server): failed logins, brute force, lockout, permission denied, 429s, root token use and issuance, privileged endpoints, audit/policy/mount changes, sealed node, leader change.</p><p><code>wazuh/rules/vault_rules.xml</code></p>` },
+  'Wazuh indexer': { tag:'wazuh-indexer 4.14.10 (OpenSearch)', html:`<p>Stores alerts. Normal traffic is decoded at level 0 and never indexed, so only findings take space.</p>` },
+  'Wazuh dashboard': { tag:'wazuh-dashboard 4.14.10 · port 8443', html:`<p>Threat Hunting plus the imported "Vault SIEM" dashboard: headline counts, timeline by rule, levels, identities, paths, failed logins by source, server log findings, event list.</p>` },
+};
+
+// ---------------------------------------------------------------- renderer
+const host = document.getElementById('scene');
+const renderer = new THREE.WebGLRenderer({ antialias:true, preserveDrawingBuffer:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+host.appendChild(renderer.domElement);
+const labels = new CSS2DRenderer();
+labels.setSize(innerWidth, innerHeight);
+Object.assign(labels.domElement.style, { position:'absolute', top:'0', pointerEvents:'none' });
+host.appendChild(labels.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0b0f17);
+scene.fog = new THREE.Fog(0x0b0f17, 60, 140);
+const camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.1, 500);
+const HOME = new THREE.Vector3(14, 38, 50);
+const TARGET = new THREE.Vector3(3, 0, 3);
+camera.position.copy(HOME);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.copy(TARGET); controls.enableDamping = true; controls.maxPolarAngle = Math.PI * 0.47;
+controls.minDistance = 20; controls.maxDistance = 110;
+
+scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x10131c, 0.9));
+const sun = new THREE.DirectionalLight(0xffffff, 1.4); sun.position.set(20, 40, 25); scene.add(sun);
+const grid = new THREE.GridHelper(120, 60, 0x1c2638, 0x141b2a); grid.position.y = -0.01; scene.add(grid);
+
+// ---------------------------------------------------------------- helpers
+const pickables = [];
+function label(text, obj, y, cls = 'label', key = text) {
+  const d = document.createElement('div'); d.className = cls; d.textContent = text;
+  if (cls === 'label') { d.style.pointerEvents = 'auto'; d.onclick = () => select(key); }
+  const l = new CSS2DObject(d); l.position.set(0, y, 0); obj.add(l); return d;
+}
+function zone(text, x, z, w, d, color) {
+  const g = new THREE.Mesh(new THREE.BoxGeometry(w, 0.3, d),
+    new THREE.MeshStandardMaterial({ color, transparent:true, opacity:0.18, roughness:0.9 }));
+  g.position.set(x, 0.15, z); scene.add(g);
+  const edge = new THREE.LineSegments(new THREE.EdgesGeometry(g.geometry), new THREE.LineBasicMaterial({ color, transparent:true, opacity:0.5 }));
+  g.add(edge);
+  const anchor = new THREE.Object3D(); anchor.position.set(x - w / 2 + 0.5, 0.4, z + d / 2 - 0.6); scene.add(anchor);
+  const div = label(text, anchor, 0, 'label zone'); div.style.transform = 'translate(0,-50%)';
+}
+function node(key, shape, color, x, z, size = 1) {
+  let geo;
+  if (shape === 'vault') geo = new THREE.CylinderGeometry(2.2 * size, 2.2 * size, 3.2 * size, 6);
+  else if (shape === 'db') geo = new THREE.CylinderGeometry(2 * size, 2 * size, 2.6 * size, 32);
+  else if (shape === 'small') geo = new THREE.BoxGeometry(2 * size, 1.4 * size, 2 * size);
+  else geo = new THREE.BoxGeometry(3.6 * size, 2.4 * size, 3 * size);
+  const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color, roughness:0.35, metalness:0.25, emissive:color, emissiveIntensity:0.08 }));
+  geo.computeBoundingBox(); const h = geo.boundingBox.max.y;
+  m.position.set(x, h + 0.3, z); m.userData.key = key; scene.add(m); pickables.push(m);
+  label(key, m, h + 1.2);
+  return m;
+}
+
+// ---------------------------------------------------------------- layout
+zone('Clients', -26, 0, 10, 20, 0x3ddc97);
+zone('Vault cluster (Raft)', -6, 0, 20, 20, 0xffd814);
+zone('Metrics', 18, -11, 22, 10, 0x4da3ff);
+zone('SIEM', 18, 8, 30, 14, 0xff8a3d);
+
+const N = {
+  'loadgen':        node('loadgen', 'small', C.client, -26, -4),
+  'incident.sh':    node('incident.sh', 'small', C.alert, -26, 5),
+  'vault-1':        node('vault-1', 'vault', C.vault, -9, -4),
+  'vault-2':        node('vault-2', 'vault', C.standby, -1, -2),
+  'vault-3':        node('vault-3', 'vault', C.standby, -6, 5),
+  'Prometheus':     node('Prometheus', 'box', C.prom, 12, -11),
+  'Grafana':        node('Grafana', 'box', C.grafana, 23, -11),
+  'Shared volume':  node('Shared volume', 'db', 0x6b7a99, 8, 6, 0.8),
+  'Wazuh manager':  node('Wazuh manager', 'box', C.wazuh, 16, 8),
+  'Wazuh indexer':  node('Wazuh indexer', 'db', 0x2a6fd0, 24, 4, 0.9),
+  'Wazuh dashboard':node('Wazuh dashboard', 'box', 0x5ab0ff, 30, 11),
+};
+const active = { key:'vault-1' };
+
+// ---------------------------------------------------------------- flows
+const flows = [];
+function curve(a, b, lift = 3) {
+  const p0 = a.position.clone(), p2 = b.position.clone();
+  const p1 = p0.clone().add(p2).multiplyScalar(0.5); p1.y += lift;
+  return new THREE.QuadraticBezierCurve3(p0, p1, p2);
+}
+function flow(from, to, color, count = 4, speed = 0.25, lift = 3) {
+  const c = curve(N[from], N[to], lift);
+  const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(c.getPoints(40)),
+    new THREE.LineBasicMaterial({ color, transparent:true, opacity:0.35 }));
+  scene.add(line);
+  const dots = [];
+  for (let i = 0; i < count; i++) {
+    const s = new THREE.Mesh(new THREE.SphereGeometry(0.28, 12, 12), new THREE.MeshBasicMaterial({ color }));
+    s.userData.t = i / count; scene.add(s); dots.push(s);
+  }
+  const f = { from, to, c, line, dots, speed, color }; flows.push(f); return f;
+}
+function rebuildRaft() {
+  for (const f of flows.filter(f => f.raft)) { scene.remove(f.line); f.dots.forEach(d => scene.remove(d)); }
+  flows.splice(0, flows.length, ...flows.filter(f => !f.raft));
+  for (const k of ['vault-1', 'vault-2', 'vault-3']) if (k !== active.key && !N[k].userData.down) {
+    const f = flow(active.key, k, C.vault, 3, 0.45, 1.5); f.raft = true;
+  }
+  for (const k of ['vault-1', 'vault-2', 'vault-3']) {
+    const on = k === active.key, down = N[k].userData.down;
+    N[k].material.color.setHex(down ? 0x3a3f4b : on ? C.vault : C.standby);
+    N[k].material.emissiveIntensity = on ? 0.35 : 0.05;
+  }
+}
+flow('loadgen', 'vault-1', C.req, 4, 0.3);
+flow('loadgen', 'vault-2', C.req, 3, 0.3);
+flow('incident.sh', 'vault-3', C.req, 2, 0.25);
+for (const k of ['vault-1', 'vault-2', 'vault-3']) flow(k, 'Prometheus', C.metrics, 3, 0.2, 5);
+flow('Prometheus', 'Grafana', C.metrics, 3, 0.3, 2);
+for (const k of ['vault-1', 'vault-2', 'vault-3']) flow(k, 'Shared volume', C.logs, 2, 0.2, 2.5);
+flow('Shared volume', 'Wazuh manager', C.logs, 3, 0.3, 2);
+flow('Wazuh manager', 'Wazuh indexer', C.logs, 3, 0.3, 2);
+flow('Wazuh indexer', 'Wazuh dashboard', C.logs, 3, 0.3, 2);
+rebuildRaft();
+
+// ---------------------------------------------------------------- interaction
+const info = document.getElementById('info');
+function select(key) {
+  const d = INFO[key]; if (!d) return;
+  info.innerHTML = `<h2>${key}</h2><div class="tag">${d.tag}</div>${d.html}`;
+  for (const m of pickables) m.scale.setScalar(m.userData.key === key ? 1.12 : 1);
+}
+function welcome() {
+  info.innerHTML = `<h2>What you are looking at</h2>
+  <div class="tag">docker compose · one command: <code>./lab.sh up</code></div>
+  <ul><li><b>Vault</b>: 3 Raft nodes, initialized, unsealed and seeded automatically</li>
+  <li><b>Metrics</b>: Prometheus scrapes every node; Grafana shows 42 panels; 11 alert rules</li>
+  <li><b>SIEM</b>: Wazuh reads the audit log and server logs; 18 custom rules; a Vault SIEM dashboard</li>
+  <li><b>Traffic</b>: a load generator, plus an incident script for the SIEM</li></ul>
+  <p>Click any component for details, or try the buttons below.</p>`;
+}
+welcome();
+const ray = new THREE.Raycaster(), mouse = new THREE.Vector2();
+renderer.domElement.addEventListener('click', e => {
+  mouse.set(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  ray.setFromCamera(mouse, camera);
+  const hit = ray.intersectObjects(pickables)[0];
+  hit ? select(hit.object.userData.key) : (welcome(), pickables.forEach(m => m.scale.setScalar(1)));
+});
+
+let showFlows = true, spin = false, flash = [];
+document.getElementById('flows').onclick = e => {
+  showFlows = !showFlows; e.target.classList.toggle('on', showFlows);
+  flows.forEach(f => { f.line.visible = showFlows; f.dots.forEach(d => d.visible = showFlows); });
+};
+document.getElementById('spin').onclick = e => { spin = !spin; controls.autoRotate = spin; e.target.classList.toggle('on', spin); };
+document.getElementById('reset').onclick = () => { camera.position.copy(HOME); controls.target.copy(TARGET); welcome(); };
+document.getElementById('failover').onclick = () => {
+  const old = active.key; N[old].userData.down = true;
+  active.key = ['vault-1', 'vault-2', 'vault-3'].find(k => k !== old && !N[k].userData.down);
+  rebuildRaft(); flash.push({ m: N[old], t: 0 }); flash.push({ m: N['Wazuh manager'], t: 0 });
+  info.innerHTML = `<h2>Failover</h2><div class="tag">${old} stopped · ${active.key} is now active</div>
+  <p>What you would see in the lab:</p><ul>
+  <li>Grafana "Active node" changes to ${active.key}; "Raft peers" stays 3, fault tolerance drops</li>
+  <li>Prometheus alert <code>VaultNodeDown</code> fires after 1 minute</li>
+  <li>Wazuh rules 100206 (election started) and 100204 (node became active)</li></ul>
+  <p>Restart it with <code>docker compose start ${old}</code> and <code>./lab.sh unseal</code>.</p>`;
+  setTimeout(() => { N[old].userData.down = false; rebuildRaft(); }, 8000);
+};
+document.getElementById('incident').onclick = () => {
+  const f = flows.find(f => f.from === 'incident.sh'); f.speed = 1.2; setTimeout(() => f.speed = 0.25, 5000);
+  ['Wazuh manager', 'Wazuh indexer', 'Wazuh dashboard'].forEach((k, i) => setTimeout(() => flash.push({ m: N[k], t: 0 }), 800 + i * 700));
+  info.innerHTML = `<h2>Incident</h2><div class="tag">./lab.sh incident</div><ul>
+  <li>8 bad passwords for carol: rule 100110, brute force 100111, lockout 100207</li>
+  <li>root token used: 100130 · new root token: 100131</li>
+  <li>generate-root: 100140 (audit) · rekey: 100202 (server log only)</li>
+  <li>policy written and deleted: 100142</li>
+  <li>bob denied 6 times: 100120, probing 100121</li></ul>
+  <p>Open Wazuh &gt; Dashboards &gt; Vault SIEM.</p>`;
+};
+
+// ---------------------------------------------------------------- loop
+const clock = new THREE.Clock();
+function frame() {
+  const dt = clock.getDelta();
+  for (const f of flows) for (const d of f.dots) {
+    d.userData.t = (d.userData.t + dt * f.speed) % 1; d.position.copy(f.c.getPoint(d.userData.t));
+  }
+  const t = clock.elapsedTime;
+  const a = N[active.key]; a.material.emissiveIntensity = 0.25 + 0.15 * Math.sin(t * 3);
+  flash = flash.filter(fl => {
+    fl.t += dt; fl.m.material.emissive.setHex(C.alert); fl.m.material.emissiveIntensity = Math.max(0, 0.9 - fl.t / 2);
+    if (fl.t > 2) { fl.m.material.emissive.copy(fl.m.material.color); return false; } return true;
+  });
+  controls.update(); renderer.render(scene, camera); labels.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+frame();
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight); labels.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>
