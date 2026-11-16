@@ -1,6 +1,6 @@
 # Exercises
 
-[Back to README](../README.md) · [Architecture](architecture.md) · [Metrics](metrics.md) · [SIEM](siem.md)
+[Back to README](../README.md) · [Access](access.md) · [Architecture](architecture.md) · [Metrics](metrics.md) · [SIEM](siem.md)
 
 Each exercise lists what to run and what you should see. Most map to Vault Operations Advanced objectives: monitoring (2), fault tolerance (4), performance (6), access control (7).
 

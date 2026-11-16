@@ -1,6 +1,6 @@
 # Troubleshooting
 
-[Back to README](../README.md)
+[Back to README](../README.md) · [Access](access.md)
 
 | Symptom | Fix |
 |---|---|

@@ -1,6 +1,6 @@
 # SIEM: Wazuh
 
-[Back to README](../README.md) · [Architecture](architecture.md) · [Metrics](metrics.md) · [Upgrades](upgrades.md) · [Exercises](exercises.md)
+[Back to README](../README.md) · [Access](access.md) · [Architecture](architecture.md) · [Metrics](metrics.md) · [Upgrades](upgrades.md) · [Exercises](exercises.md)
 
 ![Wazuh Vault SIEM dashboard](img/wazuh-vault-siem.png)
 

@@ -17,7 +17,7 @@ Interactive 3D view: [`docs/index.html`](docs/index.html) (rotate, zoom, click a
 | SIEM | Wazuh manager, indexer and dashboard; 18 custom rules for Vault audit and server logs; a "Vault SIEM" dashboard |
 | Traffic | Load generator (logins, KV, transit, tokens, quota bursts) and `./lab.sh incident` |
 | Upgrades | `./lab.sh upgrade <version>`: rolling upgrade, standbys first, active node last, snapshot and health gates; an Ansible playbook for real servers |
-| Docs | [Architecture](docs/architecture.md), [Metrics](docs/metrics.md), [SIEM](docs/siem.md), [Upgrades](docs/upgrades.md), [Exercises](docs/exercises.md), [Troubleshooting](docs/troubleshooting.md) |
+| Docs | [Accessing Vault](docs/access.md), [Architecture](docs/architecture.md), [Metrics](docs/metrics.md), [SIEM](docs/siem.md), [Upgrades](docs/upgrades.md), [Exercises](docs/exercises.md), [Troubleshooting](docs/troubleshooting.md) |
 
 ## Screenshots
 
@@ -71,6 +71,27 @@ Less memory? `./lab.sh core` runs Vault, Prometheus and Grafana only (about 1 GB
 | `./lab.sh down` | Stop, keep data |
 | `./lab.sh reset` | Delete all data, secrets and certificates |
 
+## Accessing Vault
+
+Every node has its own port: vault-1 on 8200, vault-2 on 8210, vault-3 on 8220.
+
+```bash
+# CLI on your machine (macOS: brew tap hashicorp/tap && brew install hashicorp/tap/vault)
+export VAULT_ADDR=http://localhost:8200
+export VAULT_TOKEN=$(./lab.sh token)
+vault status
+vault operator raft list-peers
+
+# or a user instead of root
+unset VAULT_TOKEN
+vault login -method=userpass username=alice password=alice-pass
+
+# or the CLI inside a container
+docker compose exec -e VAULT_TOKEN=$(./lab.sh token) vault-2 vault status
+```
+
+The web UI is at http://localhost:8200 (token from `./lab.sh token`, or alice / alice-pass). All options, credentials and first commands: [docs/access.md](docs/access.md).
+
 ## How it works
 
 ```mermaid
@@ -102,9 +123,14 @@ Testing the rules against real Vault 1.19 logs turned up a few things the docs d
 
 More in [docs/siem.md](docs/siem.md) and [docs/metrics.md](docs/metrics.md).
 
-## Upgrades without Enterprise
+## Rolling upgrades without Enterprise
 
-Community Edition has no automated upgrades and no replication, but a 3-node Raft cluster can still be upgraded one node at a time without losing data. `./lab.sh upgrade` does it with a snapshot first and autopilot health checks between nodes. In the lab, 1.20.4 to 1.21.4 took 66 seconds; a probe reading from every node saw failures only on the node being restarted and none during the leader change. [`ansible/vault-rolling-upgrade`](ansible/vault-rolling-upgrade/README.md) runs the same procedure on real servers and can be practised against the lab. Details and the Community vs. Enterprise comparison: [docs/upgrades.md](docs/upgrades.md).
+```bash
+./lab.sh versions
+./lab.sh upgrade 1.20.4
+```
+
+Community Edition has no automated upgrades and no replication, but a 3-node Raft cluster can still be upgraded one node at a time without losing data. `./lab.sh upgrade` does it with a snapshot first and autopilot health checks between nodes. In the lab, 1.20.4 to 1.21.4 took 66 seconds; a probe reading from every node saw failures only on the node being restarted and none during the leader change. [`ansible/vault-rolling-upgrade`](ansible/vault-rolling-upgrade/README.md) runs the same procedure on real servers and can be practised against the lab. Procedure, measured results, rollback, the Ansible playbook and the Community vs. Enterprise comparison: [docs/upgrades.md](docs/upgrades.md).
 
 ## Exercises
 

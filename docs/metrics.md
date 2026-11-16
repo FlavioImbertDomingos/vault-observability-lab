@@ -1,6 +1,6 @@
 # Metrics: Prometheus and Grafana
 
-[Back to README](../README.md) · [Architecture](architecture.md) · [SIEM](siem.md) · [Upgrades](upgrades.md) · [Exercises](exercises.md)
+[Back to README](../README.md) · [Access](access.md) · [Architecture](architecture.md) · [SIEM](siem.md) · [Upgrades](upgrades.md) · [Exercises](exercises.md)
 
 ![Grafana Vault overview](img/grafana-vault-overview.png)
 
