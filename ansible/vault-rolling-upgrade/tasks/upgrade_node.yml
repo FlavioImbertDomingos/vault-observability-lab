@@ -1,0 +1,111 @@
+---
+# Upgrade one node: install, restart, unseal if needed, wait for health and autopilot.
+
+- name: Install with apt (pinned)
+  ansible.builtin.apt:
+    name: "vault={{ vault_version }}-1"
+    state: present
+    update_cache: true
+    allow_downgrade: false
+  when: vault_install_method == 'package' and ansible_facts.pkg_mgr == 'apt'
+
+- name: Install with dnf/yum (pinned)
+  ansible.builtin.dnf:
+    name: "vault-{{ vault_version }}-1"
+    state: present
+  when: vault_install_method == 'package' and ansible_facts.pkg_mgr in ['dnf', 'dnf5', 'yum']
+
+- name: Download the release zip (checksum verified)
+  ansible.builtin.get_url:
+    url: "https://releases.hashicorp.com/vault/{{ vault_version }}/vault_{{ vault_version }}_linux_{{ vault_arch }}.zip"
+    checksum: "sha256:https://releases.hashicorp.com/vault/{{ vault_version }}/vault_{{ vault_version }}_SHA256SUMS"
+    dest: "/tmp/vault_{{ vault_version }}.zip"
+    mode: "0644"
+  when: vault_install_method == 'binary'
+
+- name: Install the binary
+  ansible.builtin.unarchive:
+    src: "/tmp/vault_{{ vault_version }}.zip"
+    dest: "{{ vault_bin_dir }}"
+    remote_src: true
+    include: [vault]
+    mode: "0755"
+  when: vault_install_method == 'binary'
+
+- name: Restart Vault
+  ansible.builtin.systemd_service:
+    name: "{{ vault_service }}"
+    state: restarted
+    daemon_reload: true
+  when: vault_install_method in ['package', 'binary']
+
+# Lab method: the Docker Compose lab in this repository plays the part of three servers.
+- name: Lab, pin this node's image version in .env
+  ansible.builtin.lineinfile:
+    path: "{{ vault_lab_dir }}/.env"
+    regexp: "^VAULT{{ vault_lab_node }}_VERSION="
+    line: "VAULT{{ vault_lab_node }}_VERSION={{ vault_version }}"
+    create: true
+    mode: "0644"
+  delegate_to: localhost
+  when: vault_install_method == 'lab'
+
+- name: Lab, recreate the container on the new image
+  ansible.builtin.command:
+    cmd: docker compose up -d --no-deps vault-{{ vault_lab_node }}
+    chdir: "{{ vault_lab_dir }}"
+  environment:
+    COMPOSE_FILE: "{{ lookup('ansible.builtin.env', 'COMPOSE_FILE') | default('docker-compose.yml', true) }}"
+  delegate_to: localhost
+  changed_when: true
+  when: vault_install_method == 'lab'
+
+- name: Wait for the API port
+  ansible.builtin.wait_for:
+    host: "{{ vault_api_host | default(inventory_hostname) }}"
+    port: "{{ vault_port }}"
+    timeout: 120
+  delegate_to: localhost
+
+- name: Unseal with Shamir keys (only when vault_unseal_keys is set)
+  ansible.builtin.uri:
+    url: "{{ vault_scheme }}://{{ vault_api_host | default(inventory_hostname) }}:{{ vault_port }}/v1/sys/unseal"
+    method: PUT
+    body_format: json
+    body: { key: "{{ item }}" }
+    validate_certs: "{{ vault_validate_certs }}"
+    ca_path: "{{ vault_ca_path | default(omit, true) }}"
+  loop: "{{ vault_unseal_keys }}"
+  no_log: true
+  delegate_to: localhost
+  when: vault_unseal_keys | length > 0
+
+- name: Wait until the node is unsealed on the new version
+  ansible.builtin.uri:
+    url: "{{ vault_scheme }}://{{ vault_api_host | default(inventory_hostname) }}:{{ vault_port }}/v1/sys/health"
+    status_code: [200, 429, 503]
+    validate_certs: "{{ vault_validate_certs }}"
+    ca_path: "{{ vault_ca_path | default(omit, true) }}"
+  register: node_health
+  until: node_health.status in [200, 429] and node_health.json.version == vault_version
+  retries: "{{ vault_health_retries }}"
+  delay: 5
+  delegate_to: localhost
+
+- name: Wait until autopilot sees this node healthy on the new version
+  ansible.builtin.uri:
+    url: "{{ vault_scheme }}://{{ vault_api_host | default(inventory_hostname) }}:{{ vault_port }}/v1/sys/storage/raft/autopilot/state"
+    headers: { X-Vault-Token: "{{ vault_token }}" }
+    validate_certs: "{{ vault_validate_certs }}"
+    ca_path: "{{ vault_ca_path | default(omit, true) }}"
+  register: ap
+  until: >-
+    ap.json is defined and (ap.json.data.healthy | bool)
+    and (ap.json.data.failure_tolerance | int >= 1)
+    and (ap.json.data.servers | dict2items
+         | selectattr('value.address', 'search', '^' ~ (vault_raft_name | default(inventory_hostname)) ~ ':')
+         | selectattr('value.version', 'equalto', vault_version)
+         | selectattr('value.healthy') | list | length == 1)
+  retries: "{{ vault_health_retries }}"
+  delay: 5
+  delegate_to: localhost

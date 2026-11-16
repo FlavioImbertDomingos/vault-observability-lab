@@ -7,6 +7,9 @@
 #   ./lab.sh dashboards (re)import the "Vault SIEM" dashboard into Wazuh
 #   ./lab.sh unseal     re-run init/unseal (after a restart of the Vault containers)
 #   ./lab.sh token      print the root token
+#   ./lab.sh versions   Vault version and role of each node
+#   ./lab.sh snapshot   save a Raft snapshot to ./backups
+#   ./lab.sh upgrade V  rolling upgrade to Vault version V (for example 1.20.4)
 #   ./lab.sh down       stop (keeps data)
 #   ./lab.sh reset      stop and delete ALL data, secrets and Wazuh certs
 set -euo pipefail
@@ -70,6 +73,100 @@ check_ports() {   # check_ports <var names...>
 ALL_PORTS="VAULT_PORT VAULT2_PORT VAULT3_PORT PROMETHEUS_PORT GRAFANA_PORT WAZUH_PORT WAZUH_AGENT_PORT WAZUH_ENROLL_PORT"
 CORE_PORTS="VAULT_PORT VAULT2_PORT VAULT3_PORT PROMETHEUS_PORT GRAFANA_PORT"
 
+# ------------------------------------------------------------ upgrade helpers
+VNODES="1 2 3"
+vstat() { docker compose exec -T vault-"$1" vault status -format=json 2>/dev/null || true; }
+jfield() { sed -n "s/^ *\"$1\": *\"\{0,1\}\([^\",]*\)\"\{0,1\},\{0,1\} *$/\1/p" | head -1; }
+node_version() { vstat "$1" | jfield version; }
+leader() { for n in $VNODES; do vstat "$n" | grep -q "\"is_self\": true" && { echo "$n"; return 0; }; done; return 0; }
+vexec() { local n=$1; shift; docker compose exec -T -e VAULT_TOKEN="$(root_token)" vault-"$n" vault "$@"; }
+
+set_env() {   # set_env KEY VALUE  (persist in .env and in this shell)
+  touch .env; { grep -v "^$1=" .env || true; } > .env.tmp; echo "$1=$2" >> .env.tmp; mv .env.tmp .env; export "$1=$2"
+}
+unset_env() { [ -f .env ] && { grep -v "^$1=" .env || true; } > .env.tmp && mv .env.tmp .env; unset "$1"; }
+
+versions() {
+  local l; l=$(leader)
+  for n in $VNODES; do
+    printf "  vault-%s  %-8s %s\n" "$n" "$(node_version "$n")" "$([ "$n" = "$l" ] && echo active || echo standby)"
+  done
+}
+
+snapshot() {
+  mkdir -p backups
+  local f="pre-upgrade-$(date +%Y%m%d-%H%M%S).snap" l; l=$(leader)
+  [ -n "$l" ] || { echo "No active node. Unseal first: ./lab.sh unseal"; exit 1; }
+  docker compose run --rm --no-deps -e VAULT_ADDR="http://vault-$l:8200" -e VAULT_TOKEN="$(root_token)" \
+    vault-init -c "vault operator raft snapshot save /backups/$f" >/dev/null 2>&1 || true
+  [ -s "backups/$f" ] || { echo "Snapshot failed"; exit 1; }
+  echo "  snapshot: backups/$f ($(wc -c < "backups/$f" | tr -d ' ') bytes)"
+}
+
+wait_healthy() {   # wait_healthy [NODE VERSION]: autopilot healthy, can lose one voter, NODE on VERSION
+  local l s blk
+  sleep 5
+  for i in $(seq 1 60); do
+    l=$(leader)
+    if [ -n "$l" ]; then
+      s=$(vexec "$l" operator raft autopilot state -format=json 2>/dev/null || true)
+      # first "Healthy" in the JSON is the cluster-level value
+      if echo "$s" | grep -m1 -Ei '"healthy":' | grep -q true \
+         && echo "$s" | grep -Eq '"(FailureTolerance|failure_tolerance)": [1-9]'; then
+        [ -z "${1:-}" ] && return 0
+        blk=$(echo "$s" | awk -v n="\"vault-$1\": {" 'index($0,n){f=1} f{print} f&&/NodeType/{exit}')
+        echo "$blk" | grep -q "\"Version\": \"$2\"" && echo "$blk" | grep -q '"Healthy": true' && return 0
+      fi
+    fi
+    sleep 5
+  done
+  echo "Cluster not healthy after 5 minutes. Check: ./lab.sh status"; exit 1
+}
+
+upgrade_node() {   # upgrade_node N VERSION
+  local n=$1 v=$2 rc
+  echo "- vault-$n: $(node_version "$n") -> $v"
+  set_env "VAULT${n}_VERSION" "$v"
+  docker compose up -d --no-deps vault-"$n" >/dev/null 2>&1
+  for i in $(seq 1 60); do   # wait until the new process answers (0 unsealed, 2 sealed)
+    rc=0; docker compose exec -T vault-"$n" vault status >/dev/null 2>&1 || rc=$?
+    [ "$rc" -ne 1 ] && break; sleep 2
+  done
+  docker compose run --rm --no-deps vault-init /scripts/init.sh > "backups/unseal-vault-$n.log" 2>&1 \
+    || { echo "  unseal failed, see backups/unseal-vault-$n.log"; exit 1; }
+  wait_healthy "$n" "$v"
+  echo "  vault-$n is $(node_version "$n"), unsealed, healthy in autopilot"
+}
+
+upgrade() {
+  local target=${1:-} l n new todo
+  [ -n "$target" ] || { echo "Usage: ./lab.sh upgrade <version>   (tags: https://hub.docker.com/r/hashicorp/vault/tags)"; exit 1; }
+  mkdir -p backups
+  echo "Pulling hashicorp/vault:$target ..."; docker pull -q "hashicorp/vault:$target" >/dev/null
+  echo "Before:"; versions
+  echo "1. Pre-checks and snapshot"
+  wait_healthy; snapshot
+  echo "2. Upgrade standbys one at a time, the active node last"
+  while :; do
+    l=$(leader); todo=""
+    for n in $VNODES; do [ "$(node_version "$n")" != "$target" ] && todo="$todo $n"; done
+    [ -z "$todo" ] && break
+    n=""; for c in $todo; do [ "$c" != "$l" ] && { n=$c; break; }; done
+    if [ -z "$n" ]; then
+      echo "- vault-$l is active and still on $(node_version "$l"): stepping it down"
+      vexec "$l" operator step-down >/dev/null 2>&1 || true
+      for i in $(seq 1 30); do new=$(leader); [ -n "$new" ] && [ "$new" != "$l" ] && break; sleep 2; done
+      echo "  new active node: vault-$new ($(node_version "$new"))"
+      n=$l
+    fi
+    upgrade_node "$n" "$target"
+  done
+  for n in $VNODES; do unset_env "VAULT${n}_VERSION"; done
+  set_env VAULT_VERSION "$target"
+  echo "Done. After:"; versions
+  echo "Rollback, if ever needed: stop the cluster, set VAULT_VERSION back, restore the snapshot from backups/."
+}
+
 certs() {
   if [ ! -f "$CERTS/root-ca.pem" ]; then
     echo "Generating Wazuh certificates (first run only)..."
@@ -99,6 +196,7 @@ case "${1:-}" in
     docker compose ps --format "table {{.Service}}\t{{.State}}\t{{.Status}}"
     echo
     docker compose exec -e VAULT_TOKEN="$(root_token)" vault-1 vault operator raft list-peers || true
+    echo; versions
     urls ;;
   dashboards)
     import_dashboards ;;
@@ -110,6 +208,12 @@ case "${1:-}" in
     docker compose logs vault-init | tail -8 ;;
   token)
     root_token ;;
+  versions)
+    versions ;;
+  snapshot)
+    snapshot ;;
+  upgrade)
+    upgrade "${2:-}" ;;
   down)
     docker compose down ;;
   reset)
@@ -119,5 +223,5 @@ case "${1:-}" in
     rm -f secrets/init.json secrets/loadgen-token secrets/.seeded
     rm -rf "$CERTS" ;;
   *)
-    sed -n '2,12p' "$0" ;;
+    sed -n '2,15p' "$0" ;;
 esac

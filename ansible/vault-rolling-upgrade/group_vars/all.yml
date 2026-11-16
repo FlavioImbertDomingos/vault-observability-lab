@@ -1,0 +1,30 @@
+# Target version, exactly as HashiCorp publishes it (for example 1.21.4).
+vault_version: "1.21.4"
+
+# How Vault is installed on the servers:
+#   package  HashiCorp apt or yum repository, version pinned (vault=1.21.4-1)
+#   binary   zip from releases.hashicorp.com into vault_bin_dir, checksum verified
+#   lab      the Docker Compose lab in this repository (see inventory.lab.ini)
+vault_install_method: package
+vault_bin_dir: /usr/local/bin
+vault_arch: amd64                 # amd64 or arm64
+vault_service: vault              # systemd unit
+
+# API access. The playbook talks to every node directly, not through the load balancer.
+vault_scheme: https
+vault_port: 8200
+vault_validate_certs: true
+vault_ca_path: ""                 # PEM bundle if your CA is private, for example /etc/ssl/acme-root.pem
+
+# Token with the policy in upgrade-policy.hcl. Read from the environment, never stored in files.
+vault_token: "{{ lookup('ansible.builtin.env', 'VAULT_TOKEN') }}"
+
+# Auto-unseal (KMS, HSM or transit) is strongly recommended. With Shamir, supply the keys at run
+# time (ansible-vault encrypted vars or --extra-vars @keys.yml) and they will be used per node.
+vault_unseal_keys: []
+
+# Where the pre-upgrade Raft snapshot is saved on the control machine.
+vault_snapshot_dir: "{{ playbook_dir }}/backups"
+
+# Waits
+vault_health_retries: 60          # x 5 s

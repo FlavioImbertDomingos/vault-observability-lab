@@ -1,0 +1,9 @@
+# Overrides for the Docker Compose lab (passed with -e @lab-vars.yml so they win over group_vars).
+ansible_connection: local
+ansible_python_interpreter: "{{ ansible_playbook_python }}"
+vault_api_host: localhost
+vault_scheme: http
+vault_install_method: lab
+vault_lab_dir: "{{ playbook_dir }}/../.."
+# the lab uses one Shamir key, kept in secrets/init.json
+vault_unseal_keys: "{{ (lookup('ansible.builtin.file', vault_lab_dir ~ '/secrets/init.json') | from_json).unseal_keys_b64 }}"

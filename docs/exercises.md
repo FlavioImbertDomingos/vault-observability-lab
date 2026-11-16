@@ -76,6 +76,15 @@ docker compose exec -e VAULT_TOKEN=$VAULT_TOKEN vault-1 vault operator step-down
 
 A graceful version of exercise 1. The active node gives up leadership without stopping. Grafana shows the new active node; Wazuh raises 100208 (active node stepped down) and 100204 (node became active). The step-down request is in the audit log as a request line only, which is why the rule reads the server log. This is the step you run on the active node last during a rolling upgrade.
 
-## 8. Write your own detection
+## 8. Rolling upgrade
+
+```bash
+./lab.sh versions
+./lab.sh upgrade 1.20.4
+```
+
+Watch Grafana while it runs: the active node moves once, applied index on the restarted node catches up, fault tolerance stays at 1 between nodes. In Wazuh you will see 100203 (sealed) for each restart, 100208 and 100204 for the leader change. Then repeat with the Ansible playbook (`ansible/vault-rolling-upgrade`, `inventory.lab.ini`) to the next version. See [upgrades.md](upgrades.md).
+
+## 9. Write your own detection
 
 Add a rule that alerts when someone reads `secret/data/admin/break-glass` successfully, test it with `wazuh-logtest`, restart the manager and trigger it with the root token.

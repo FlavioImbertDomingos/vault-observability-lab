@@ -30,6 +30,12 @@ jobs:
           xml.dom.minidom.parseString("<root>" + open("wazuh/rules/vault_rules.xml").read().split("-->", 1)[1] + "</root>")
           PY
 
+      - name: Ansible playbook
+        run: |
+          pip install --quiet ansible-core
+          cd ansible/vault-rolling-upgrade
+          ansible-playbook -i inventory.example.ini upgrade.yml --syntax-check
+
       - name: Generated dashboards are up to date
         run: |
           python3 grafana/build_dashboard.py

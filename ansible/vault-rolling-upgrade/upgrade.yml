@@ -1,0 +1,145 @@
+---
+# Rolling upgrade of a Vault Community Edition cluster on Integrated Storage (Raft).
+# Order: pre-checks and snapshot, standbys one at a time, step down the active node, upgrade it last.
+# Run: ansible-playbook -i inventory.ini upgrade.yml -e vault_version=1.21.4
+
+- name: Discover cluster state and take a snapshot
+  hosts: vault
+  gather_facts: false
+  tasks:
+    - name: Read health of each node
+      ansible.builtin.uri:
+        url: "{{ vault_scheme }}://{{ vault_api_host | default(inventory_hostname) }}:{{ vault_port }}/v1/sys/health"
+        status_code: [200, 429, 472, 473, 501, 503]
+        validate_certs: "{{ vault_validate_certs }}"
+        ca_path: "{{ vault_ca_path | default(omit, true) }}"
+      register: health
+      delegate_to: localhost
+
+    - name: Refuse to start with a sealed or uninitialized node
+      ansible.builtin.assert:
+        that: health.status in [200, 429]
+        fail_msg: "{{ inventory_hostname }} returned {{ health.status }} (503 sealed, 501 not initialized). Fix it first."
+
+    - name: Record role and version
+      ansible.builtin.set_fact:
+        vault_is_active: "{{ health.status == 200 }}"
+        vault_current_version: "{{ health.json.version }}"
+
+    - name: Group nodes that still need the upgrade
+      ansible.builtin.group_by:
+        key: "{{ 'vault_upgrade_active' if vault_is_active else 'vault_upgrade_standby' }}"
+      when: vault_current_version != vault_version
+
+    - name: Check autopilot (cluster healthy and able to lose one voter)
+      ansible.builtin.uri:
+        url: "{{ vault_scheme }}://{{ vault_api_host | default(inventory_hostname) }}:{{ vault_port }}/v1/sys/storage/raft/autopilot/state"
+        headers: { X-Vault-Token: "{{ vault_token }}" }
+        validate_certs: "{{ vault_validate_certs }}"
+        ca_path: "{{ vault_ca_path | default(omit, true) }}"
+      register: autopilot
+      delegate_to: localhost
+      when: vault_is_active
+
+    - name: Assert autopilot is healthy
+      ansible.builtin.assert:
+        that:
+          - autopilot.json.data.healthy | bool
+          - autopilot.json.data.failure_tolerance | int >= 1
+        fail_msg: "Autopilot is not healthy or failure tolerance is 0. Do not upgrade now."
+      when: vault_is_active
+
+    - name: Create the snapshot directory
+      ansible.builtin.file:
+        path: "{{ vault_snapshot_dir }}"
+        state: directory
+        mode: "0700"
+      delegate_to: localhost
+      run_once: true  # noqa: run-once[task]
+
+    - name: Save a Raft snapshot before touching anything
+      ansible.builtin.uri:
+        url: "{{ vault_scheme }}://{{ vault_api_host | default(inventory_hostname) }}:{{ vault_port }}/v1/sys/storage/raft/snapshot"
+        headers: { X-Vault-Token: "{{ vault_token }}" }
+        dest: "{{ vault_snapshot_dir }}/pre-upgrade-{{ vault_current_version }}-{{ lookup('ansible.builtin.pipe', 'date +%Y%m%d-%H%M%S') }}.snap"
+        validate_certs: "{{ vault_validate_certs }}"
+        ca_path: "{{ vault_ca_path | default(omit, true) }}"
+      delegate_to: localhost
+      when: vault_is_active
+
+- name: Upgrade standbys, one at a time
+  hosts: vault_upgrade_standby
+  serial: 1
+  gather_facts: true
+  tasks:
+    - name: Upgrade this node
+      ansible.builtin.include_tasks: tasks/upgrade_node.yml
+
+- name: Step down the active node and upgrade it last
+  hosts: vault_upgrade_active
+  serial: 1
+  gather_facts: true
+  tasks:
+    - name: Step down
+      ansible.builtin.uri:
+        url: "{{ vault_scheme }}://{{ vault_api_host | default(inventory_hostname) }}:{{ vault_port }}/v1/sys/step-down"
+        method: PUT
+        headers: { X-Vault-Token: "{{ vault_token }}" }
+        status_code: [200, 204]
+        validate_certs: "{{ vault_validate_certs }}"
+        ca_path: "{{ vault_ca_path | default(omit, true) }}"
+      delegate_to: localhost
+
+    - name: Wait until this node reports standby (another node took over)
+      ansible.builtin.uri:
+        url: "{{ vault_scheme }}://{{ vault_api_host | default(inventory_hostname) }}:{{ vault_port }}/v1/sys/health"
+        status_code: [200, 429]
+        validate_certs: "{{ vault_validate_certs }}"
+        ca_path: "{{ vault_ca_path | default(omit, true) }}"
+      register: after_stepdown
+      until: after_stepdown.status == 429
+      retries: 30
+      delay: 2
+      delegate_to: localhost
+
+    - name: Upgrade this node
+      ansible.builtin.include_tasks: tasks/upgrade_node.yml
+
+- name: Lab only, record the new version for docker compose
+  hosts: vault
+  gather_facts: false
+  tasks:
+    - name: Set VAULT_VERSION and drop per-node overrides in the lab .env
+      ansible.builtin.lineinfile:
+        path: "{{ vault_lab_dir }}/.env"
+        regexp: "{{ item.re }}"
+        line: "{{ item.line | default(omit) }}"
+        state: "{{ item.state }}"
+        create: true
+        mode: "0644"
+      loop:
+        - { re: '^VAULT1_VERSION=', state: absent }
+        - { re: '^VAULT2_VERSION=', state: absent }
+        - { re: '^VAULT3_VERSION=', state: absent }
+        - { re: '^VAULT_VERSION=', line: "VAULT_VERSION={{ vault_version }}", state: present }
+      delegate_to: localhost
+      run_once: true  # noqa: run-once[task]
+      when: vault_install_method == 'lab'
+
+- name: Verify every node runs the target version
+  hosts: vault
+  gather_facts: false
+  tasks:
+    - name: Read health
+      ansible.builtin.uri:
+        url: "{{ vault_scheme }}://{{ vault_api_host | default(inventory_hostname) }}:{{ vault_port }}/v1/sys/health"
+        status_code: [200, 429]
+        validate_certs: "{{ vault_validate_certs }}"
+        ca_path: "{{ vault_ca_path | default(omit, true) }}"
+      register: final
+      delegate_to: localhost
+
+    - name: Assert version
+      ansible.builtin.assert:
+        that: final.json.version == vault_version
+        success_msg: "{{ inventory_hostname }}: {{ final.json.version }} ({{ 'active' if final.status == 200 else 'standby' }})"

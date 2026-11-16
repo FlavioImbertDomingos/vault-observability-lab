@@ -16,7 +16,8 @@ Interactive 3D view: [`docs/index.html`](docs/index.html) (rotate, zoom, click a
 | Metrics | Prometheus scraping every node, 11 alert rules, a Grafana dashboard with 42 panels |
 | SIEM | Wazuh manager, indexer and dashboard; 18 custom rules for Vault audit and server logs; a "Vault SIEM" dashboard |
 | Traffic | Load generator (logins, KV, transit, tokens, quota bursts) and `./lab.sh incident` |
-| Docs | [Architecture](docs/architecture.md), [Metrics](docs/metrics.md), [SIEM](docs/siem.md), [Exercises](docs/exercises.md), [Troubleshooting](docs/troubleshooting.md) |
+| Upgrades | `./lab.sh upgrade <version>`: rolling upgrade, standbys first, active node last, snapshot and health gates; an Ansible playbook for real servers |
+| Docs | [Architecture](docs/architecture.md), [Metrics](docs/metrics.md), [SIEM](docs/siem.md), [Upgrades](docs/upgrades.md), [Exercises](docs/exercises.md), [Troubleshooting](docs/troubleshooting.md) |
 
 ## Screenshots
 
@@ -64,6 +65,9 @@ Less memory? `./lab.sh core` runs Vault, Prometheus and Grafana only (about 1 GB
 | `./lab.sh unseal` | Unseal after Docker restarts |
 | `./lab.sh dashboards` | Re-import the Wazuh dashboard |
 | `./lab.sh token` | Print the root token |
+| `./lab.sh versions` | Version and role of each node |
+| `./lab.sh snapshot` | Raft snapshot to `backups/` |
+| `./lab.sh upgrade 1.20.4` | Rolling upgrade, no downtime for clients behind a health-checked load balancer |
 | `./lab.sh down` | Stop, keep data |
 | `./lab.sh reset` | Delete all data, secrets and certificates |
 
@@ -98,9 +102,13 @@ Testing the rules against real Vault 1.19 logs turned up a few things the docs d
 
 More in [docs/siem.md](docs/siem.md) and [docs/metrics.md](docs/metrics.md).
 
+## Upgrades without Enterprise
+
+Community Edition has no automated upgrades and no replication, but a 3-node Raft cluster can still be upgraded one node at a time without losing data. `./lab.sh upgrade` does it with a snapshot first and autopilot health checks between nodes. In the lab, 1.20.4 to 1.21.4 took 66 seconds; a probe reading from every node saw failures only on the node being restarted and none during the leader change. [`ansible/vault-rolling-upgrade`](ansible/vault-rolling-upgrade/README.md) runs the same procedure on real servers and can be practised against the lab. Details and the Community vs. Enterprise comparison: [docs/upgrades.md](docs/upgrades.md).
+
 ## Exercises
 
-Failover, incident response, rate limits, lease growth, Raft quorum, audit HMAC search, planned leader change, writing your own detection. See [docs/exercises.md](docs/exercises.md).
+Failover, incident response, rate limits, lease growth, Raft quorum, audit HMAC search, planned leader change, writing your own detection, rolling upgrade. See [docs/exercises.md](docs/exercises.md).
 
 ## Lab only
 
