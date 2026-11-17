@@ -15,6 +15,10 @@ scrape_configs:
       format: [prometheus]
     static_configs:
       - targets: ["vault-1:8200", "vault-2:8200", "vault-3:8200"]
+        labels: { cluster: cloud-a }
+    # second cluster: lab.sh writes targets/cloud-b.json on "multicloud up" and empties it on "down"
+    file_sd_configs:
+      - files: ["/etc/prometheus/targets/*.json"]
     relabel_configs:
       - source_labels: [__address__]
         regex: "([^:]+):.*"

@@ -1,6 +1,6 @@
 # Exercises
 
-[Back to README](../README.md) · [Access](access.md) · [Architecture](architecture.md) · [Metrics](metrics.md) · [SIEM](siem.md)
+[Back to README](../README.md) · [Multi-cloud](multicloud.md) · [Access](access.md) · [Architecture](architecture.md) · [Metrics](metrics.md) · [SIEM](siem.md)
 
 Each exercise lists what to run and what you should see. Most map to Vault Operations Advanced objectives: monitoring (2), fault tolerance (4), performance (6), access control (7).
 
@@ -85,6 +85,19 @@ A graceful version of exercise 1. The active node gives up leadership without st
 
 Watch Grafana while it runs: the active node moves once, applied index on the restarted node catches up, fault tolerance stays at 1 between nodes. In Wazuh you will see 100203 (sealed) for each restart, 100208 and 100204 for the leader change. Then repeat with the Ansible playbook (`ansible/vault-rolling-upgrade`, `inventory.lab.ini`) to the next version. See [upgrades.md](upgrades.md).
 
-## 9. Write your own detection
+## 9. Multi-cloud drift
+
+```bash
+./lab.sh multicloud up
+./lab.sh tf apply
+VAULT_ADDR=http://localhost:8300 VAULT_TOKEN=$(./lab.sh token b) vault policy write platform-deployer - <<'EOF'
+path "platform/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+EOF
+./lab.sh tf plan
+```
+
+Terraform shows the change on cloud-b only. Find the same change in Wazuh (rule 100142, location `/var/log/vault-b/audit.log`), then `./lab.sh tf apply` to restore it. Open the "Vault multi-cloud" dashboard and compare the two clusters. See [multicloud.md](multicloud.md).
+
+## 10. Write your own detection
 
 Add a rule that alerts when someone reads `secret/data/admin/break-glass` successfully, test it with `wazuh-logtest`, restart the manager and trigger it with the root token.

@@ -4,9 +4,12 @@
 # LAB ONLY: one unseal key (threshold 1) and the root token are written to ./secrets.
 set -eu
 
-SECRETS=/secrets
+# Defaults are the main cluster ("cloud-a"). The second cluster sets these in docker-compose.yml.
+SECRETS=${SECRETS_DIR:-/secrets}
 INIT_FILE=$SECRETS/init.json
-NODES="vault-1 vault-2 vault-3"
+NODES=${NODES:-"vault-1 vault-2 vault-3"}
+FIRST_NODE=${NODES%% *}
+mkdir -p "$SECRETS"
 
 log() { echo "[vault-init] $*"; }
 
@@ -32,10 +35,10 @@ json_field() {    # json_field <file> <key>  -> first string value (or first arr
 
 for n in $NODES; do wait_reachable "$n"; done
 
-export VAULT_ADDR=http://vault-1:8200
+export VAULT_ADDR=http://$FIRST_NODE:8200
 
 if ! vault status -format=json 2>/dev/null | grep -q '"initialized": true'; then
-  log "initializing vault-1 (1 key share, threshold 1: lab only)"
+  log "initializing $FIRST_NODE (1 key share, threshold 1: lab only)"
   vault operator init -key-shares=1 -key-threshold=1 -format=json > "$INIT_FILE"
   chmod 600 "$INIT_FILE"
   FIRST_RUN=1
@@ -57,9 +60,7 @@ unseal() {
   log "could not unseal $1"; exit 1
 }
 
-unseal vault-1
-unseal vault-2   # on the first run this also joins the node to vault-1
-unseal vault-3
+for n in $NODES; do unseal "$n"; done   # on the first run this also joins the followers
 
 # wait for a Raft leader (after a restart, the nodes need a few seconds to elect one)
 wait_leader() {
@@ -129,4 +130,4 @@ fi
 
 log "cluster ready"
 wait_leader && vault operator raft list-peers || true
-log "root token: ./lab.sh token   URLs: ./lab.sh status"
+log "root token saved in $INIT_FILE (./lab.sh token, ./lab.sh token b)"

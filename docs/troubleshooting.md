@@ -1,6 +1,6 @@
 # Troubleshooting
 
-[Back to README](../README.md) · [Access](access.md)
+[Back to README](../README.md) · [Multi-cloud](multicloud.md) · [Access](access.md)
 
 | Symptom | Fix |
 |---|---|

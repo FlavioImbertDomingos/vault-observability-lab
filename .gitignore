@@ -6,3 +6,7 @@ backups/*
 .env
 .env.tmp
 ansible/vault-rolling-upgrade/backups/
+terraform/**/.terraform/
+terraform/**/terraform.tfstate*
+terraform/**/.terraform.lock.hcl
+prometheus/targets/*.json

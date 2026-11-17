@@ -1,6 +1,6 @@
 # Rolling upgrades without Enterprise
 
-[Back to README](../README.md) · [Access](access.md) · [Architecture](architecture.md) · [Exercises](exercises.md) · [Ansible playbook](../ansible/vault-rolling-upgrade/README.md)
+[Back to README](../README.md) · [Multi-cloud](multicloud.md) · [Access](access.md) · [Architecture](architecture.md) · [Exercises](exercises.md) · [Ansible playbook](../ansible/vault-rolling-upgrade/README.md)
 
 Vault Enterprise can upgrade a cluster by itself (autopilot automated upgrades) and can lean on a DR or performance replica while the primary is being worked on. Vault Community Edition has neither, but a Raft cluster of three or more nodes can still be upgraded with no data loss and only seconds of interruption, by hand or with a script. This page covers why it works, the procedure, what we measured in the lab, rollback, and what Enterprise adds.
 

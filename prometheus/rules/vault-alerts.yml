@@ -8,7 +8,7 @@ groups:
         for: 1m
         labels: { severity: critical }
         annotations:
-          summary: "{{ $labels.node }} is sealed"
+          summary: "{{ $labels.node }} ({{ $labels.cluster }}) is sealed"
 
       - alert: VaultNodeDown
         expr: up{job="vault"} == 0
@@ -18,11 +18,11 @@ groups:
           summary: "{{ $labels.instance }} is not answering /v1/sys/metrics"
 
       - alert: VaultNoActiveNode
-        expr: sum(vault_core_active) < 1
+        expr: sum by (cluster) (vault_core_active) < 1
         for: 1m
         labels: { severity: critical }
         annotations:
-          summary: "No active Vault node"
+          summary: "No active Vault node in {{ $labels.cluster }}"
 
       - alert: VaultLeadershipLost
         expr: increase(vault_core_leadership_lost_count[10m]) > 0
@@ -31,11 +31,11 @@ groups:
           summary: "{{ $labels.node }} lost leadership in the last 10 minutes"
 
       - alert: VaultRaftFailureToleranceZero
-        expr: max(vault_autopilot_failure_tolerance) < 1
+        expr: max by (cluster) (vault_autopilot_failure_tolerance) < 1
         for: 2m
         labels: { severity: warning }
         annotations:
-          summary: "Raft cluster cannot lose another voter without losing quorum"
+          summary: "{{ $labels.cluster }} cannot lose another voter without losing quorum"
 
       - alert: VaultAuditFailure
         expr: increase(vault_audit_log_request_failure[5m]) > 0 or increase(vault_audit_log_response_failure[5m]) > 0
@@ -64,14 +64,14 @@ groups:
           summary: "GC pause on {{ $labels.node }} above 2 s per minute"
 
       - alert: VaultLeaseCountHigh
-        expr: sum(vault_expire_num_leases) > 250000
+        expr: sum by (cluster) (vault_expire_num_leases) > 250000
         for: 15m
         labels: { severity: warning }
         annotations:
-          summary: "More than 250k active leases"
+          summary: "More than 250k active leases in {{ $labels.cluster }}"
 
       - alert: VaultRateLimitViolations
-        expr: sum(increase(vault_quota_rate_limit_violation[5m])) > 0
+        expr: sum by (cluster) (increase(vault_quota_rate_limit_violation[5m])) > 0
         labels: { severity: info }
         annotations:
           summary: "Clients hit a rate limit quota (HTTP 429)"

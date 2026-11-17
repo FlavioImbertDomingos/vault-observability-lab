@@ -1,6 +1,6 @@
 # Architecture
 
-[Back to README](../README.md) · [Access](access.md) · [3D view](index.html) · [Metrics](metrics.md) · [SIEM](siem.md) · [Upgrades](upgrades.md) · [Exercises](exercises.md) · [Troubleshooting](troubleshooting.md)
+[Back to README](../README.md) · [Access](access.md) · [3D view](index.html) · [Metrics](metrics.md) · [SIEM](siem.md) · [Upgrades](upgrades.md) · [Multi-cloud](multicloud.md) · [Exercises](exercises.md) · [Troubleshooting](troubleshooting.md)
 
 ![3D architecture](img/architecture-3d.png)
 
@@ -83,7 +83,7 @@ Restarting is safe: `vault-init` sees the cluster is initialized and only unseal
 
 ```
 docker-compose.yml            all services
-lab.sh                        helper commands (up, core, status, incident, unseal, dashboards, token, versions, snapshot, upgrade, down, reset)
+lab.sh                        helper commands (up, core, status, incident, unseal, dashboards, token, versions, snapshot, upgrade, multicloud, tf, down, reset)
 .env.example                  ports and other overrides
 vault/config/vault.hcl        shared server config: Raft, listener, telemetry
 vault/nodes/vault-N.hcl       per-node log file
@@ -97,6 +97,9 @@ wazuh/gen-certs.sh            offline certificate generator
 wazuh/config/                 manager, indexer and dashboard config (adapted from wazuh-docker)
 wazuh/rules/vault_rules.xml   Vault rules
 wazuh/*.ndjson                Vault SIEM dashboard and index pattern
+terraform/multicloud          Terraform baseline applied to cloud-a and cloud-b
+vault/config/vault-b.hcl      config of the optional second cluster (cloud-b)
+prometheus/targets/           scrape targets for cloud-b, written by ./lab.sh multicloud
 ansible/vault-rolling-upgrade Ansible rolling upgrade for real servers (and the lab)
 backups/                      Raft snapshots from ./lab.sh snapshot and upgrade (git-ignored)
 docs/                         this documentation and the 3D view

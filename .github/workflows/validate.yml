@@ -36,6 +36,12 @@ jobs:
           cd ansible/vault-rolling-upgrade
           ansible-playbook -i inventory.example.ini upgrade.yml --syntax-check
 
+      - name: Terraform
+        run: |
+          docker run --rm -v "$PWD/terraform/multicloud:/work" -w /work hashicorp/terraform:1.17 fmt -check -recursive
+          docker run --rm -v "$PWD/terraform/multicloud:/work" -w /work --entrypoint sh hashicorp/terraform:1.17 \
+            -c "terraform init -backend=false -input=false >/dev/null && terraform validate"
+
       - name: Generated dashboards are up to date
         run: |
           python3 grafana/build_dashboard.py

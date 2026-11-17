@@ -2,8 +2,8 @@
 # Simulates suspicious activity so you can watch Wazuh alerts and Grafana panels react.
 # Every step is harmless and undone where needed.
 set -u
-export VAULT_ADDR=http://vault-1:8200
-ROOT=$(tr -d '\n ' < /secrets/init.json | sed -n 's/.*"root_token":"\([^"]*\)".*/\1/p')
+export VAULT_ADDR=http://${TARGET:-vault-1}:8200
+ROOT=$(tr -d '\n ' < ${SECRETS_DIR:-/secrets}/init.json | sed -n 's/.*"root_token":"\([^"]*\)".*/\1/p')
 
 step() { echo; echo "== $*"; }
 

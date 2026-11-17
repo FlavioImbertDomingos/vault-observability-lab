@@ -48,7 +48,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(vault_core_unsealed)",
+          "expr": "sum(vault_core_unsealed{cluster=\"$cluster\"})",
           "instant": true,
           "legendFormat": "__auto"
         }
@@ -116,7 +116,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "vault_core_active == 1",
+          "expr": "vault_core_active{cluster=\"$cluster\"} == 1",
           "instant": true,
           "legendFormat": "{{node}}"
         }
@@ -176,7 +176,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max(vault_raft_peers)",
+          "expr": "max(vault_raft_peers{cluster=\"$cluster\"})",
           "instant": true,
           "legendFormat": "__auto"
         }
@@ -240,7 +240,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max(vault_autopilot_failure_tolerance)",
+          "expr": "max(vault_autopilot_failure_tolerance{cluster=\"$cluster\"})",
           "instant": true,
           "legendFormat": "__auto"
         }
@@ -304,7 +304,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max(vault_autopilot_healthy)",
+          "expr": "max(vault_autopilot_healthy{cluster=\"$cluster\"})",
           "instant": true,
           "legendFormat": "__auto"
         }
@@ -368,7 +368,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "round(sum(increase(vault_audit_log_request_failure[1h])) + sum(increase(vault_audit_log_response_failure[1h])))",
+          "expr": "round(sum(increase(vault_audit_log_request_failure{cluster=\"$cluster\"}[1h])) + sum(increase(vault_audit_log_response_failure{cluster=\"$cluster\"}[1h])))",
           "instant": true,
           "legendFormat": "__auto"
         }
@@ -432,7 +432,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "round(sum(increase(vault_token_create_root[24h])))",
+          "expr": "round(sum(increase(vault_token_create_root{cluster=\"$cluster\"}[24h])))",
           "instant": true,
           "legendFormat": "__auto"
         }
@@ -496,7 +496,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max(vault_core_locked_users) or vector(0)",
+          "expr": "max(vault_core_locked_users{cluster=\"$cluster\"}) or vector(0)",
           "instant": true,
           "legendFormat": "__auto"
         }
@@ -560,7 +560,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(vault_expire_num_leases)",
+          "expr": "sum(vault_expire_num_leases{cluster=\"$cluster\"})",
           "instant": true,
           "legendFormat": "__auto"
         }
@@ -628,7 +628,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(vault_token_count)",
+          "expr": "sum(vault_token_count{cluster=\"$cluster\"})",
           "instant": true,
           "legendFormat": "__auto"
         }
@@ -688,7 +688,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(vault_identity_entity_count)",
+          "expr": "sum(vault_identity_entity_count{cluster=\"$cluster\"})",
           "instant": true,
           "legendFormat": "__auto"
         }
@@ -748,7 +748,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(vault_core_handle_request_count[1m]))",
+          "expr": "sum(rate(vault_core_handle_request_count{cluster=\"$cluster\"}[1m]))",
           "instant": true,
           "legendFormat": "__auto"
         }
@@ -808,7 +808,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max(vault_core_handle_request{quantile=\"0.99\"} * on(instance) group_left() (vault_core_active == 1))",
+          "expr": "max(vault_core_handle_request{cluster=\"$cluster\",quantile=\"0.99\"} * on(instance) group_left() (vault_core_active{cluster=\"$cluster\"} == 1))",
           "instant": true,
           "legendFormat": "__auto"
         }
@@ -876,7 +876,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "round(sum(increase(vault_quota_rate_limit_violation[1h]))) or vector(0)",
+          "expr": "round(sum(increase(vault_quota_rate_limit_violation{cluster=\"$cluster\"}[1h]))) or vector(0)",
           "instant": true,
           "legendFormat": "__auto"
         }
@@ -953,7 +953,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "rate(vault_core_handle_request_count[1m])",
+          "expr": "rate(vault_core_handle_request_count{cluster=\"$cluster\"}[1m])",
           "legendFormat": "{{node}}"
         }
       ],
@@ -1004,7 +1004,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max by (quantile) (vault_core_handle_request{quantile=~\"0.5|0.9|0.99\"} * on(instance) group_left() (vault_core_active == 1))",
+          "expr": "max by (quantile) (vault_core_handle_request{cluster=\"$cluster\",quantile=~\"0.5|0.9|0.99\"} * on(instance) group_left() (vault_core_active{cluster=\"$cluster\"} == 1))",
           "legendFormat": "p{{quantile}}"
         }
       ],
@@ -1055,7 +1055,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "rate(vault_core_handle_login_request_count[1m])",
+          "expr": "rate(vault_core_handle_login_request_count{cluster=\"$cluster\"}[1m])",
           "legendFormat": "{{node}}"
         }
       ],
@@ -1106,7 +1106,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "vault_core_handle_login_request{quantile=\"0.99\"}",
+          "expr": "vault_core_handle_login_request{cluster=\"$cluster\",quantile=\"0.99\"}",
           "legendFormat": "{{node}}"
         }
       ],
@@ -1157,7 +1157,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (name) (increase(vault_quota_rate_limit_violation[1m]))",
+          "expr": "sum by (name) (increase(vault_quota_rate_limit_violation{cluster=\"$cluster\"}[1m]))",
           "legendFormat": "{{name}}"
         }
       ],
@@ -1208,7 +1208,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "vault_core_in_flight_requests",
+          "expr": "vault_core_in_flight_requests{cluster=\"$cluster\"}",
           "legendFormat": "{{node}}"
         }
       ],
@@ -1259,7 +1259,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "rate(vault_audit_log_request_count[1m])",
+          "expr": "rate(vault_audit_log_request_count{cluster=\"$cluster\"}[1m])",
           "legendFormat": "request {{node}}"
         },
         {
@@ -1268,7 +1268,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "rate(vault_audit_log_response_count[1m])",
+          "expr": "rate(vault_audit_log_response_count{cluster=\"$cluster\"}[1m])",
           "legendFormat": "response {{node}}"
         }
       ],
@@ -1319,7 +1319,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "rate(vault_ha_rpc_client_forward_count[1m])",
+          "expr": "rate(vault_ha_rpc_client_forward_count{cluster=\"$cluster\"}[1m])",
           "legendFormat": "{{node}}"
         }
       ],
@@ -1383,7 +1383,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "vault_expire_num_leases",
+          "expr": "vault_expire_num_leases{cluster=\"$cluster\"}",
           "legendFormat": "{{node}}"
         }
       ],
@@ -1434,7 +1434,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (policy) (vault_token_count_by_policy)",
+          "expr": "sum by (policy) (vault_token_count_by_policy{cluster=\"$cluster\"})",
           "legendFormat": "{{policy}}"
         }
       ],
@@ -1485,7 +1485,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (auth_method) (rate(vault_token_creation[5m])) * 60",
+          "expr": "sum by (auth_method) (rate(vault_token_creation{cluster=\"$cluster\"}[5m])) * 60",
           "legendFormat": "{{auth_method}}"
         }
       ],
@@ -1536,7 +1536,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(vault_identity_entity_count)",
+          "expr": "sum(vault_identity_entity_count{cluster=\"$cluster\"})",
           "legendFormat": "entities"
         }
       ],
@@ -1587,7 +1587,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (mount_point) (vault_secret_kv_count)",
+          "expr": "sum by (mount_point) (vault_secret_kv_count{cluster=\"$cluster\"})",
           "legendFormat": "{{mount_point}}"
         }
       ],
@@ -1638,7 +1638,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(vault_expire_num_irrevocable_leases)",
+          "expr": "sum(vault_expire_num_irrevocable_leases{cluster=\"$cluster\"})",
           "legendFormat": "irrevocable"
         }
       ],
@@ -1702,7 +1702,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "vault_raft_leader_lastContact{quantile=\"0.99\"}",
+          "expr": "vault_raft_leader_lastContact{cluster=\"$cluster\",quantile=\"0.99\"}",
           "legendFormat": "{{node}}"
         }
       ],
@@ -1753,7 +1753,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "vault_raft_storage_follower_last_heartbeat_ms",
+          "expr": "vault_raft_storage_follower_last_heartbeat_ms{cluster=\"$cluster\"}",
           "legendFormat": "{{peer_id}}"
         }
       ],
@@ -1804,7 +1804,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "vault_raft_commitTime{quantile=\"0.99\"}",
+          "expr": "vault_raft_commitTime{cluster=\"$cluster\",quantile=\"0.99\"}",
           "legendFormat": "{{node}}"
         }
       ],
@@ -1855,7 +1855,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "vault_raft_storage_stats_applied_index",
+          "expr": "vault_raft_storage_stats_applied_index{cluster=\"$cluster\"}",
           "legendFormat": "{{node}}"
         }
       ],
@@ -1906,7 +1906,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "vault_raft_storage_put{quantile=\"0.99\"}",
+          "expr": "vault_raft_storage_put{cluster=\"$cluster\",quantile=\"0.99\"}",
           "legendFormat": "put {{node}}"
         },
         {
@@ -1915,7 +1915,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "vault_raft_storage_get{quantile=\"0.99\"}",
+          "expr": "vault_raft_storage_get{cluster=\"$cluster\",quantile=\"0.99\"}",
           "legendFormat": "get {{node}}"
         }
       ],
@@ -1966,7 +1966,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (node) (vault_raft_storage_bolt_freelist_used_bytes)",
+          "expr": "sum by (node) (vault_raft_storage_bolt_freelist_used_bytes{cluster=\"$cluster\"})",
           "legendFormat": "{{node}}"
         }
       ],
@@ -2030,7 +2030,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "vault_runtime_sys_bytes",
+          "expr": "vault_runtime_sys_bytes{cluster=\"$cluster\"}",
           "legendFormat": "{{node}}"
         }
       ],
@@ -2081,7 +2081,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "rate(vault_runtime_total_gc_pause_ns[2m]) * 60 / 1e9",
+          "expr": "rate(vault_runtime_total_gc_pause_ns{cluster=\"$cluster\"}[2m]) * 60 / 1e9",
           "legendFormat": "{{node}}"
         }
       ],
@@ -2152,7 +2152,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "vault_runtime_num_goroutines",
+          "expr": "vault_runtime_num_goroutines{cluster=\"$cluster\"}",
           "legendFormat": "{{node}}"
         }
       ],
@@ -2183,7 +2183,30 @@
     }
   ],
   "templating": {
-    "list": []
+    "list": [
+      {
+        "name": "cluster",
+        "label": "Cluster",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(vault_core_unsealed, cluster)",
+          "refId": "cluster"
+        },
+        "definition": "label_values(vault_core_unsealed, cluster)",
+        "refresh": 2,
+        "sort": 1,
+        "current": {
+          "text": "cloud-a",
+          "value": "cloud-a"
+        },
+        "includeAll": false,
+        "multi": false
+      }
+    ]
   },
   "annotations": {
     "list": []

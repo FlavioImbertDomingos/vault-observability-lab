@@ -2,8 +2,8 @@
 # Background traffic so the dashboards and the SIEM have data.
 # A mix of good and bad requests across all three nodes.
 set -u
-TOKEN=$(cat /secrets/loadgen-token)
-NODES="vault-1 vault-2 vault-3"
+TOKEN=$(cat "${SECRETS_DIR:-/secrets}/loadgen-token")
+NODES=${NODES:-"vault-1 vault-2 vault-3"}
 RATE=${LOADGEN_SLEEP:-3}     # seconds between rounds
 
 pick() { set -- $NODES; i=$(( $(od -An -N1 -tu1 /dev/urandom) % 3 + 1 )); eval echo "\$$i"; }

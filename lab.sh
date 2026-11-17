@@ -10,6 +10,9 @@
 #   ./lab.sh versions   Vault version and role of each node
 #   ./lab.sh snapshot   save a Raft snapshot to ./backups
 #   ./lab.sh upgrade V  rolling upgrade to Vault version V (for example 1.20.4)
+#   ./lab.sh multicloud up|down|status   second independent cluster ("cloud-b") on 8300-8320
+#   ./lab.sh tf plan|apply|...           Terraform baseline applied to both clusters
+#   ./lab.sh token b    print the root token of cloud-b
 #   ./lab.sh down       stop (keeps data)
 #   ./lab.sh reset      stop and delete ALL data, secrets and Wazuh certs
 set -euo pipefail
@@ -25,6 +28,7 @@ CERTS=wazuh/config/wazuh_indexer_ssl_certs
 CORE="vault-1 vault-2 vault-3 vault-init loadgen audit-rotate prometheus grafana"
 
 root_token() { sed -n 's/.*"root_token": *"\([^"]*\)".*/\1/p' secrets/init.json 2>/dev/null; }
+root_token_b() { sed -n 's/.*"root_token": *"\([^"]*\)".*/\1/p' secrets/cloud-b/init.json 2>/dev/null; }
 
 urls() {
   cat <<EOF
@@ -72,6 +76,65 @@ check_ports() {   # check_ports <var names...>
 }
 ALL_PORTS="VAULT_PORT VAULT2_PORT VAULT3_PORT PROMETHEUS_PORT GRAFANA_PORT WAZUH_PORT WAZUH_AGENT_PORT WAZUH_ENROLL_PORT"
 CORE_PORTS="VAULT_PORT VAULT2_PORT VAULT3_PORT PROMETHEUS_PORT GRAFANA_PORT"
+VAULTB1_PORT=${VAULTB1_PORT:-8300}; VAULTB2_PORT=${VAULTB2_PORT:-8310}; VAULTB3_PORT=${VAULTB3_PORT:-8320}
+B_PORTS="VAULTB1_PORT VAULTB2_PORT VAULTB3_PORT"
+B_SERVICES="vaultb-1 vaultb-2 vaultb-3 vaultb-init loadgen-b"
+MC="docker compose --profile multicloud"
+
+# ------------------------------------------------------------ multi-cloud helpers
+versions_b() {
+  local n v r
+  for n in 1 2 3; do
+    v=$(docker compose exec -T vaultb-"$n" vault status -format=json 2>/dev/null || true)
+    r=$(echo "$v" | grep -q '"is_self": true' && echo active || echo standby)
+    printf "  vaultb-%s %-8s %s\n" "$n" "$(echo "$v" | sed -n 's/^ *"version": "\([^"]*\)".*/\1/p')" "$r"
+  done
+}
+
+multicloud() {
+  case "${1:-}" in
+    up)
+      check_ports $B_PORTS
+      $MC up -d $B_SERVICES || { $MC logs --tail 25 vaultb-init; exit 1; }
+      $MC wait vaultb-init >/dev/null 2>&1 || true
+      $MC logs vaultb-init | tail -6
+      cat > prometheus/targets/cloud-b.json <<JSON
+[{ "targets": ["vaultb-1:8200", "vaultb-2:8200", "vaultb-3:8200"], "labels": { "cluster": "cloud-b" } }]
+JSON
+      curl -s -X POST "http://localhost:$PROMETHEUS_PORT/-/reload" >/dev/null 2>&1 || true
+      # the Wazuh log collector only picks up files that exist when it starts
+      if [ -n "$(docker compose ps -q wazuh.manager 2>/dev/null)" ]; then docker compose restart wazuh.manager >/dev/null; fi
+      echo
+      echo "cloud-b is up: http://localhost:$VAULTB1_PORT (also $VAULTB2_PORT, $VAULTB3_PORT), token: ./lab.sh token b"
+      echo "Grafana: Vault multi-cloud dashboard, or pick cluster=cloud-b in Vault overview."
+      echo "Next: ./lab.sh tf apply   (same baseline on both clusters)" ;;
+    down)
+      $MC stop $B_SERVICES
+      echo '[]' > prometheus/targets/cloud-b.json ;;
+    status|"")
+      echo "cloud-a:"; versions; echo "cloud-b:"; versions_b ;;
+    *) echo "Usage: ./lab.sh multicloud up|down|status"; exit 1 ;;
+  esac
+}
+
+tf() {   # run Terraform in terraform/multicloud against both clusters
+  local dir=terraform/multicloud
+  [ -n "$(root_token_b)" ] || { echo "cloud-b is not initialized. Run: ./lab.sh multicloud up"; exit 1; }
+  if command -v terraform >/dev/null 2>&1; then
+    ( cd "$dir"
+      [ -d .terraform ] || terraform init -input=false >/dev/null
+      TF_VAR_cloud_a_token="$(cd ../.. && root_token)" TF_VAR_cloud_b_token="$(cd ../.. && root_token_b)" \
+      TF_VAR_cloud_a_address="http://localhost:$VAULT_PORT" TF_VAR_cloud_b_address="http://localhost:$VAULTB1_PORT" \
+      terraform "$@" )
+  else   # no local Terraform: use the official image on the lab network
+    local run="docker run --rm --network vault-lab_default -v $PWD/$dir:/work -w /work \
+      -e TF_VAR_cloud_a_token=$(root_token) -e TF_VAR_cloud_b_token=$(root_token_b) \
+      -e TF_VAR_cloud_a_address=http://vault-1:8200 -e TF_VAR_cloud_b_address=http://vaultb-1:8200 \
+      hashicorp/terraform:${TERRAFORM_VERSION:-1.17}"
+    [ -d "$dir/.terraform" ] || $run init -input=false >/dev/null
+    $run "$@"
+  fi
+}
 
 # ------------------------------------------------------------ upgrade helpers
 VNODES="1 2 3"
@@ -201,13 +264,21 @@ case "${1:-}" in
   dashboards)
     import_dashboards ;;
   incident)
-    docker compose run --rm --no-deps vault-init /scripts/incident.sh ;;
+    if [ "${2:-}" = "b" ]; then
+      $MC run --rm --no-deps -e TARGET=vaultb-1 -e SECRETS_DIR=/secrets/cloud-b vaultb-init /scripts/incident.sh
+    else
+      docker compose run --rm --no-deps vault-init /scripts/incident.sh
+    fi ;;
+  multicloud)
+    multicloud "${2:-}" ;;
+  tf)
+    shift; tf "$@" ;;
   unseal)
     docker compose up -d --force-recreate vault-init
     docker compose wait vault-init >/dev/null 2>&1 || true
     docker compose logs vault-init | tail -8 ;;
   token)
-    root_token ;;
+    if [ "${2:-}" = "b" ]; then root_token_b; else root_token; fi ;;
   versions)
     versions ;;
   snapshot)
@@ -215,13 +286,16 @@ case "${1:-}" in
   upgrade)
     upgrade "${2:-}" ;;
   down)
-    docker compose down ;;
+    $MC down ;;
   reset)
     read -r -p "Delete all lab data, secrets and Wazuh certs? [y/N] " a
     [ "$a" = "y" ] || exit 0
-    docker compose down -v
+    $MC down -v
     rm -f secrets/init.json secrets/loadgen-token secrets/.seeded
+    rm -rf secrets/cloud-b
+    echo '[]' > prometheus/targets/cloud-b.json
+    rm -rf terraform/multicloud/.terraform terraform/multicloud/terraform.tfstate*
     rm -rf "$CERTS" ;;
   *)
-    sed -n '2,15p' "$0" ;;
+    sed -n '2,18p' "$0" ;;
 esac

@@ -17,7 +17,8 @@ Interactive 3D view: [`docs/index.html`](docs/index.html) (rotate, zoom, click a
 | SIEM | Wazuh manager, indexer and dashboard; 18 custom rules for Vault audit and server logs; a "Vault SIEM" dashboard |
 | Traffic | Load generator (logins, KV, transit, tokens, quota bursts) and `./lab.sh incident` |
 | Upgrades | `./lab.sh upgrade <version>`: rolling upgrade, standbys first, active node last, snapshot and health gates; an Ansible playbook for real servers |
-| Docs | [Accessing Vault](docs/access.md), [Architecture](docs/architecture.md), [Metrics](docs/metrics.md), [SIEM](docs/siem.md), [Upgrades](docs/upgrades.md), [Exercises](docs/exercises.md), [Troubleshooting](docs/troubleshooting.md) |
+| Multi-cloud | `./lab.sh multicloud up` adds a second independent cluster; Terraform applies one baseline to both and detects drift; Grafana and Wazuh show both |
+| Docs | [Accessing Vault](docs/access.md), [Multi-cloud](docs/multicloud.md), [Architecture](docs/architecture.md), [Metrics](docs/metrics.md), [SIEM](docs/siem.md), [Upgrades](docs/upgrades.md), [Exercises](docs/exercises.md), [Troubleshooting](docs/troubleshooting.md) |
 
 ## Screenshots
 
@@ -68,6 +69,9 @@ Less memory? `./lab.sh core` runs Vault, Prometheus and Grafana only (about 1 GB
 | `./lab.sh versions` | Version and role of each node |
 | `./lab.sh snapshot` | Raft snapshot to `backups/` |
 | `./lab.sh upgrade 1.20.4` | Rolling upgrade, no downtime for clients behind a health-checked load balancer |
+| `./lab.sh multicloud up` | Start cloud-b, a second independent cluster on 8300-8320 |
+| `./lab.sh tf plan` / `apply` | Terraform baseline on both clusters, drift detection |
+| `./lab.sh token b` | Root token of cloud-b |
 | `./lab.sh down` | Stop, keep data |
 | `./lab.sh reset` | Delete all data, secrets and certificates |
 
@@ -132,9 +136,25 @@ More in [docs/siem.md](docs/siem.md) and [docs/metrics.md](docs/metrics.md).
 
 Community Edition has no automated upgrades and no replication, but a 3-node Raft cluster can still be upgraded one node at a time without losing data. `./lab.sh upgrade` does it with a snapshot first and autopilot health checks between nodes. In the lab, 1.20.4 to 1.21.4 took 66 seconds; a probe reading from every node saw failures only on the node being restarted and none during the leader change. [`ansible/vault-rolling-upgrade`](ansible/vault-rolling-upgrade/README.md) runs the same procedure on real servers and can be practised against the lab. Procedure, measured results, rollback, the Ansible playbook and the Community vs. Enterprise comparison: [docs/upgrades.md](docs/upgrades.md).
 
+## Multi-cloud
+
+One Raft cluster belongs in one region of one cloud; stretching a quorum across clouds is the pattern to avoid. Without Enterprise replication, the practical multi-cloud design is an independent cluster per cloud, configured identically from code. The lab shows it:
+
+```bash
+./lab.sh multicloud up      # cloud-b: vaultb-1..3 on ports 8300, 8310, 8320
+./lab.sh tf apply           # same mounts, policies, AppRole and quota on both clusters
+./lab.sh tf plan            # a manual change on either cluster shows up as drift
+```
+
+| Grafana: both clusters side by side | Terraform finds a hand-edited policy on cloud-b |
+|---|---|
+| ![Multi-cloud](docs/img/grafana-multicloud.png) | ![Drift](docs/img/terraform-drift.png) |
+
+Patterns compared (central cluster, independent clusters, stretched Raft, Enterprise replication), the Terraform layout, monitoring several clusters and where this design stops: [docs/multicloud.md](docs/multicloud.md).
+
 ## Exercises
 
-Failover, incident response, rate limits, lease growth, Raft quorum, audit HMAC search, planned leader change, writing your own detection, rolling upgrade. See [docs/exercises.md](docs/exercises.md).
+Failover, incident response, rate limits, lease growth, Raft quorum, audit HMAC search, planned leader change, writing your own detection, rolling upgrade, multi-cloud drift. See [docs/exercises.md](docs/exercises.md).
 
 ## Lab only
 

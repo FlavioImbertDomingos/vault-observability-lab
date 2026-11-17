@@ -1,6 +1,18 @@
 #!/usr/bin/env python3
 """Generates grafana/dashboards/vault-overview.json. Edit here, then run: python3 grafana/build_dashboard.py"""
-import json, os
+import json, os, re
+
+FILTER = True   # add {cluster="$cluster"} to every Vault metric (turned off for the multi-cloud dashboard)
+
+
+def scoped(expr):
+    if not FILTER:
+        return expr
+    def rep(m):
+        inner = m.group(3)
+        return f'{m.group(1)}{{cluster="$cluster"' + (f",{inner}" if inner else "") + "}"
+    return re.sub(r'\b(vault_[A-Za-z0-9_]+)(\{([^}]*)\})?', rep, expr)
+
 
 DS = {"type": "prometheus", "uid": "prometheus"}
 panels, y = [], 0
@@ -25,7 +37,7 @@ def stat(title, expr, x, w=3, h=4, unit="none", thresholds=None, legend=None, te
     panels.append({
         "type": "stat", "title": title, "id": nid(), "datasource": DS, "description": desc,
         "gridPos": {"h": h, "w": w, "x": x, "y": y},
-        "targets": [{"refId": "A", "datasource": DS, "expr": expr, "instant": True,
+        "targets": [{"refId": "A", "datasource": DS, "expr": scoped(expr), "instant": True,
                      "legendFormat": legend or "__auto"}],
         "fieldConfig": {"defaults": {"unit": unit, "thresholds": {"mode": "absolute", "steps": steps},
                                      "color": {"mode": "thresholds"}}, "overrides": []},
@@ -36,7 +48,7 @@ def stat(title, expr, x, w=3, h=4, unit="none", thresholds=None, legend=None, te
 
 
 def ts(title, targets, x, w=12, h=8, unit="none", desc="", stack=False, thresholds=None):
-    t = [{"refId": chr(65 + i), "datasource": DS, "expr": e, "legendFormat": l} for i, (e, l) in enumerate(targets)]
+    t = [{"refId": chr(65 + i), "datasource": DS, "expr": scoped(e), "legendFormat": l} for i, (e, l) in enumerate(targets)]
     defaults = {"unit": unit, "custom": {"lineWidth": 2, "fillOpacity": 10, "showPoints": "never",
                                          "stacking": {"mode": "normal" if stack else "none"}}}
     if thresholds:
@@ -159,10 +171,60 @@ y += 8
 dash = {
     "uid": "vault-overview", "title": "Vault overview", "tags": ["vault"], "timezone": "browser",
     "schemaVersion": 39, "version": 1, "refresh": "15s", "time": {"from": "now-1h", "to": "now"},
-    "panels": panels, "templating": {"list": []}, "annotations": {"list": []},
+    "panels": panels, "templating": {"list": [{
+        "name": "cluster", "label": "Cluster", "type": "query", "datasource": DS,
+        "query": {"query": "label_values(vault_core_unsealed, cluster)", "refId": "cluster"},
+        "definition": "label_values(vault_core_unsealed, cluster)", "refresh": 2, "sort": 1,
+        "current": {"text": "cloud-a", "value": "cloud-a"}, "includeAll": False, "multi": False}]}, "annotations": {"list": []},
     "description": "Vault lab: key metrics from HashiCorp's monitoring guidance",
 }
 out = os.path.join(os.path.dirname(__file__), "dashboards", "vault-overview.json")
 with open(out, "w") as f:
     json.dump(dash, f, indent=2)
+print("wrote", out, len(panels), "panels")
+
+
+# ------------------------------------------------------------------ multi-cloud
+# Side-by-side view of every cluster Prometheus knows about (cloud-a, cloud-b, ...).
+FILTER = False
+panels, y, pid = [], 0, 0
+row("Clusters side by side")
+ts("Unsealed nodes per cluster", [("sum by (cluster) (vault_core_unsealed)", "{{cluster}}")], 0, w=8)
+ts("Raft fault tolerance per cluster", [("max by (cluster) (vault_autopilot_failure_tolerance)", "{{cluster}}")], 8, w=8,
+   desc="0 means the cluster cannot lose another voter.")
+ts("Active node per cluster", [("max by (cluster, node) (vault_core_active) == 1", "{{cluster}}: {{node}}")], 16, w=8,
+   desc="A leader change shows as a new line.")
+y += 8
+row("Load and usage")
+ts("Requests per second", [("sum by (cluster) (rate(vault_core_handle_request_count[1m]))", "{{cluster}}")], 0, w=8,
+   unit="reqps")
+ts("p99 latency on the active node (ms)",
+   [('max by (cluster) (vault_core_handle_request{quantile="0.99"} * on(instance) group_left() (vault_core_active == 1))',
+     "{{cluster}}")], 8, w=8, unit="ms")
+ts("Logins per second", [("sum by (cluster) (rate(vault_core_handle_login_request_count[1m]))", "{{cluster}}")], 16,
+   w=8, unit="reqps")
+y += 8
+ts("Active leases", [("sum by (cluster) (vault_expire_num_leases)", "{{cluster}}")], 0, w=8)
+ts("Tokens", [("sum by (cluster) (vault_token_count)", "{{cluster}}")], 8, w=8)
+ts("KV secrets by mount", [("sum by (cluster, mount_point) (vault_secret_kv_count)", "{{cluster}} {{mount_point}}")],
+   16, w=8, desc="After terraform apply, the platform/ mount appears with the same count in every cluster.")
+y += 8
+row("Health signals")
+ts("Audit failures (per 5 min)",
+   [("sum by (cluster) (increase(vault_audit_log_request_failure[5m]) + increase(vault_audit_log_response_failure[5m]))",
+     "{{cluster}}")], 0, w=8)
+ts("Raft commit time p99 (ms)", [('max by (cluster) (vault_raft_commitTime{quantile="0.99"})', "{{cluster}}")], 8,
+   w=8, unit="ms")
+ts("Memory (sys_bytes, sum of nodes)", [("sum by (cluster) (vault_runtime_sys_bytes)", "{{cluster}}")], 16, w=8,
+   unit="bytes")
+y += 8
+multi = {
+    "uid": "vault-multicloud", "title": "Vault multi-cloud", "tags": ["vault"], "timezone": "browser",
+    "schemaVersion": 39, "version": 1, "refresh": "15s", "time": {"from": "now-1h", "to": "now"},
+    "panels": panels, "templating": {"list": []}, "annotations": {"list": []},
+    "description": "Every Vault cluster side by side (./lab.sh multicloud up adds cloud-b)",
+}
+out = os.path.join(os.path.dirname(__file__), "dashboards", "vault-multicloud.json")
+with open(out, "w") as f:
+    json.dump(multi, f, indent=2)
 print("wrote", out, len(panels), "panels")

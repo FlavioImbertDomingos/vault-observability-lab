@@ -102,7 +102,8 @@ table("vault-paths", "Paths in alerts", "rule.groups:vault and data.request.path
 table("vault-failed", "Failed logins by path and source", "rule.id:100110",
       ["data.request.path", "data.request.remote_address"], 32, 35, 16)
 table("vault-server", "Server log findings by node", "rule.groups:vault_server", ["rule.description", "location"],
-      0, 49, 48, h=12)
+      0, 49, 28, h=12)
+table("vault-clusters", "Alerts by cluster (log file)", "rule.groups:vault", ["location"], 28, 49, 20, h=12)
 
 # event list
 objs.append({

@@ -21,6 +21,7 @@ x-vault-node: &vault-node
 x-vault-client: &vault-client
   image: hashicorp/vault:${VAULT_VERSION:-1.19.5}
   entrypoint: ["/bin/sh"]
+  user: "0:0"        # newer images default to a non-root user; these helpers write ./secrets
   volumes:
     - ./vault/scripts:/scripts:ro
     - ./secrets:/secrets
@@ -82,6 +83,73 @@ services:
       LOADGEN_SLEEP: ${LOADGEN_SLEEP:-3}
     depends_on:
       vault-init: { condition: service_completed_successfully }
+
+  # ------------------------------------------------- second cluster (cloud-b)
+  # Optional: ./lab.sh multicloud up   (docker compose --profile multicloud)
+  # An independent Raft cluster standing in for another cloud or region.
+  vaultb-1:
+    <<: *vault-node
+    profiles: [multicloud]
+    hostname: vaultb-1
+    image: hashicorp/vault:${VAULTB_VERSION:-${VAULT_VERSION:-1.19.5}}
+    ports: ["${VAULTB1_PORT:-8300}:8200"]
+    environment:
+      <<: *vault-env
+      VAULT_RAFT_NODE_ID: vaultb-1
+      VAULT_API_ADDR: http://vaultb-1:8200
+      VAULT_CLUSTER_ADDR: http://vaultb-1:8201
+    volumes: [./vault/config/vault-b.hcl:/vault/config/vault.hcl:ro, ./vault/nodes/vaultb-1.hcl:/vault/config/node.hcl:ro, vaultb-audit:/vault/logs, vaultb-1-data:/vault/file]
+
+  vaultb-2:
+    <<: *vault-node
+    profiles: [multicloud]
+    hostname: vaultb-2
+    image: hashicorp/vault:${VAULTB_VERSION:-${VAULT_VERSION:-1.19.5}}
+    ports: ["${VAULTB2_PORT:-8310}:8200"]
+    environment:
+      <<: *vault-env
+      VAULT_RAFT_NODE_ID: vaultb-2
+      VAULT_API_ADDR: http://vaultb-2:8200
+      VAULT_CLUSTER_ADDR: http://vaultb-2:8201
+    volumes: [./vault/config/vault-b.hcl:/vault/config/vault.hcl:ro, ./vault/nodes/vaultb-2.hcl:/vault/config/node.hcl:ro, vaultb-audit:/vault/logs, vaultb-2-data:/vault/file]
+
+  vaultb-3:
+    <<: *vault-node
+    profiles: [multicloud]
+    hostname: vaultb-3
+    image: hashicorp/vault:${VAULTB_VERSION:-${VAULT_VERSION:-1.19.5}}
+    ports: ["${VAULTB3_PORT:-8320}:8200"]
+    environment:
+      <<: *vault-env
+      VAULT_RAFT_NODE_ID: vaultb-3
+      VAULT_API_ADDR: http://vaultb-3:8200
+      VAULT_CLUSTER_ADDR: http://vaultb-3:8201
+    volumes: [./vault/config/vault-b.hcl:/vault/config/vault.hcl:ro, ./vault/nodes/vaultb-3.hcl:/vault/config/node.hcl:ro, vaultb-audit:/vault/logs, vaultb-3-data:/vault/file]
+
+  vaultb-init:
+    <<: *vault-client
+    profiles: [multicloud]
+    command: ["/scripts/init.sh"]
+    restart: "no"
+    environment:
+      NODES: "vaultb-1 vaultb-2 vaultb-3"
+      SECRETS_DIR: /secrets/cloud-b
+    depends_on:
+      vaultb-1: { condition: service_healthy }
+      vaultb-2: { condition: service_healthy }
+      vaultb-3: { condition: service_healthy }
+
+  loadgen-b:
+    <<: *vault-client
+    profiles: [multicloud]
+    command: ["/scripts/loadgen.sh"]
+    restart: unless-stopped
+    environment:
+      NODES: "vaultb-1 vaultb-2 vaultb-3"
+      SECRETS_DIR: /secrets/cloud-b
+      LOADGEN_SLEEP: ${LOADGEN_SLEEP:-3}
+    depends_on:
+      vaultb-init: { condition: service_completed_successfully }
 
   # ----------------------------------------------------------- Metrics
   prometheus:
@@ -172,6 +240,7 @@ services:
       # mounted in place so edits apply on "docker compose restart wazuh.manager"
       - ./wazuh/rules/vault_rules.xml:/var/ossec/etc/rules/vault_rules.xml:ro
       - vault-audit:/var/log/vault:ro          # Vault audit log + server logs
+      - vaultb-audit:/var/log/vault-b:ro       # same for the second cluster (empty unless multicloud)
     depends_on:
       wazuh.indexer: { condition: service_started }
       # start after Vault created audit.log, so logcollector picks it up from the first line
@@ -222,6 +291,10 @@ services:
 
 volumes:
   vault-audit:
+  vaultb-audit:
+  vaultb-1-data:
+  vaultb-2-data:
+  vaultb-3-data:
   vault-1-data:
   vault-2-data:
   vault-3-data:
