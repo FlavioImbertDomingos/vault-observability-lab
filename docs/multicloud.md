@@ -1,6 +1,6 @@
 # Multi-cloud with independent clusters
 
-[Back to README](../README.md) · [Access](access.md) · [Architecture](architecture.md) · [Upgrades](upgrades.md) · [Exercises](exercises.md)
+[Back to README](../README.md) · [Terraform](terraform.md) · [Access](access.md) · [Architecture](architecture.md) · [Upgrades](upgrades.md) · [Exercises](exercises.md)
 
 ![Grafana: Vault multi-cloud](img/grafana-multicloud.png)
 
@@ -82,7 +82,7 @@ The baseline module creates, in every cluster:
 - AppRole auth at `approle-platform` with role `deployer` (20 minute tokens)
 - a rate limit quota of 50 requests per second on `platform/`
 
-`./lab.sh tf` runs a local `terraform` if one is installed, otherwise the `hashicorp/terraform` image on the lab network. The tokens come from the lab's secrets; nothing is stored in the Terraform files. State stays local in `terraform/multicloud/` (git-ignored).
+`./lab.sh tf` runs a local `terraform` if one is installed, otherwise the `hashicorp/terraform` image on the lab network. Terraform does not get the root token: each run writes the `terraform` policy with root and hands Terraform a 30-minute token with that policy (see [terraform.md](terraform.md)). Nothing is stored in the Terraform files. State stays local in `terraform/multicloud/` (git-ignored).
 
 Adding a third cloud is one more provider block and one more module call.
 
@@ -112,7 +112,7 @@ Terraform reports one change on cloud-b only, with the exact difference, and `./
 
 ## Lessons from running it
 
-- Terraform with the root token works, but every resource it reads or writes shows up in the SIEM as root token use (rule 100130). In production give Terraform its own auth (AppRole or JWT from CI) and a policy limited to the paths it manages.
+- The first version ran Terraform with the root token. It worked, but every resource it read or wrote showed up in the SIEM as root token use (rule 100130), which buries real root use. Terraform now runs with its own policy limited to the paths it manages and a 30-minute token; in production it would log in with JWT from CI or AppRole. Details, plus keeping secrets out of the state file and adopting config that already exists: [terraform.md](terraform.md).
 - Newer Vault images (2.0) run as a non-root user by default. The lab's helper containers now run as root explicitly so they can write `./secrets`; check the same thing in your own images and scripts before upgrading.
 - Independent clusters drift unless something checks. A scheduled `terraform plan` is the cheapest guard.
 

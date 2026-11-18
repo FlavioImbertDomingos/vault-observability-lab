@@ -1,6 +1,6 @@
 # Architecture
 
-[Back to README](../README.md) · [Access](access.md) · [3D view](index.html) · [Metrics](metrics.md) · [SIEM](siem.md) · [Upgrades](upgrades.md) · [Multi-cloud](multicloud.md) · [Exercises](exercises.md) · [Troubleshooting](troubleshooting.md)
+[Back to README](../README.md) · [Access](access.md) · [3D view](index.html) · [Metrics](metrics.md) · [SIEM](siem.md) · [Upgrades](upgrades.md) · [Multi-cloud](multicloud.md) · [Terraform](terraform.md) · [Exercises](exercises.md) · [Troubleshooting](troubleshooting.md)
 
 ![3D architecture](img/architecture-3d.png)
 

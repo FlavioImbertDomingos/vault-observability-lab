@@ -18,7 +18,8 @@ Interactive 3D view: [`docs/index.html`](docs/index.html) (rotate, zoom, click a
 | Traffic | Load generator (logins, KV, transit, tokens, quota bursts) and `./lab.sh incident` |
 | Upgrades | `./lab.sh upgrade <version>`: rolling upgrade, standbys first, active node last, snapshot and health gates; an Ansible playbook for real servers |
 | Multi-cloud | `./lab.sh multicloud up` adds a second independent cluster; Terraform applies one baseline to both and detects drift; Grafana and Wazuh show both |
-| Docs | [Accessing Vault](docs/access.md), [Multi-cloud](docs/multicloud.md), [Architecture](docs/architecture.md), [Metrics](docs/metrics.md), [SIEM](docs/siem.md), [Upgrades](docs/upgrades.md), [Exercises](docs/exercises.md), [Troubleshooting](docs/troubleshooting.md) |
+| Terraform | Runs with its own least-privilege policy and a 30-minute token, never root; a demo of secrets in state next to ephemeral resources and write-only arguments; a staged exercise that imports hand-made config |
+| Docs | [Accessing Vault](docs/access.md), [Multi-cloud](docs/multicloud.md), [Terraform](docs/terraform.md), [Architecture](docs/architecture.md), [Metrics](docs/metrics.md), [SIEM](docs/siem.md), [Upgrades](docs/upgrades.md), [Exercises](docs/exercises.md), [Troubleshooting](docs/troubleshooting.md) |
 
 ## Screenshots
 
@@ -71,6 +72,9 @@ Less memory? `./lab.sh core` runs Vault, Prometheus and Grafana only (about 1 GB
 | `./lab.sh upgrade 1.20.4` | Rolling upgrade, no downtime for clients behind a health-checked load balancer |
 | `./lab.sh multicloud up` | Start cloud-b, a second independent cluster on 8300-8320 |
 | `./lab.sh tf plan` / `apply` | Terraform baseline on both clusters, drift detection |
+| `./lab.sh tf state-secrets apply` | Demo: which Terraform patterns leave secrets in the state file |
+| `./lab.sh secrets-check` | Show which resources hold the demo password in state |
+| `./lab.sh tf adopt plan` | Exercise: import hand-made config into Terraform in stages |
 | `./lab.sh token b` | Root token of cloud-b |
 | `./lab.sh down` | Stop, keep data |
 | `./lab.sh reset` | Delete all data, secrets and certificates |
@@ -152,9 +156,20 @@ One Raft cluster belongs in one region of one cloud; stretching a quorum across 
 
 Patterns compared (central cluster, independent clusters, stretched Raft, Enterprise replication), the Terraform layout, monitoring several clusters and where this design stops: [docs/multicloud.md](docs/multicloud.md).
 
+## Terraform without secrets in state
+
+Terraform never gets the root token: each `./lab.sh tf` run hands it a 30-minute token with a policy that can manage configuration but cannot read application secrets, unmount `secret/` or touch audit devices. Two more pieces cover common mistakes:
+
+```bash
+./lab.sh tf state-secrets apply   # the same secrets written and read the classic way and the ephemeral way
+./lab.sh secrets-check            # IN STATE for the classic resources, clean for the rest
+```
+
+`sensitive = true` only hides a value on screen. Ephemeral resources (Terraform 1.10) and write-only arguments (1.11) keep it out of `terraform.tfstate`; the demo shows both, including an AppRole SecretID that never reaches state. `terraform/adopt/` brings config that was created by hand under Terraform in five stages with `import` blocks and `-generate-config-out`, lowest risk first. Results, what broke along the way and the rules we kept: [docs/terraform.md](docs/terraform.md).
+
 ## Exercises
 
-Failover, incident response, rate limits, lease growth, Raft quorum, audit HMAC search, planned leader change, writing your own detection, rolling upgrade, multi-cloud drift. See [docs/exercises.md](docs/exercises.md).
+Failover, incident response, rate limits, lease growth, Raft quorum, audit HMAC search, planned leader change, rolling upgrade, multi-cloud drift, secrets in Terraform state, adopting hand-made config, writing your own detection. See [docs/exercises.md](docs/exercises.md).
 
 ## Lab only
 

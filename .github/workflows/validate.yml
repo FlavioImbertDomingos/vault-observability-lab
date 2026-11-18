@@ -38,9 +38,12 @@ jobs:
 
       - name: Terraform
         run: |
-          docker run --rm -v "$PWD/terraform/multicloud:/work" -w /work hashicorp/terraform:1.17 fmt -check -recursive
-          docker run --rm -v "$PWD/terraform/multicloud:/work" -w /work --entrypoint sh hashicorp/terraform:1.17 \
-            -c "terraform init -backend=false -input=false >/dev/null && terraform validate"
+          for d in multicloud state-secrets adopt; do
+            echo "== terraform/$d"
+            docker run --rm -v "$PWD/terraform/$d:/work" -w /work hashicorp/terraform:1.17 fmt -check -recursive
+            docker run --rm -v "$PWD/terraform/$d:/work" -w /work --entrypoint sh hashicorp/terraform:1.17 \
+              -c "terraform init -backend=false -input=false >/dev/null && terraform validate"
+          done
 
       - name: Generated dashboards are up to date
         run: |

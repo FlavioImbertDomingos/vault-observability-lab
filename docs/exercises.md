@@ -1,8 +1,8 @@
 # Exercises
 
-[Back to README](../README.md) · [Multi-cloud](multicloud.md) · [Access](access.md) · [Architecture](architecture.md) · [Metrics](metrics.md) · [SIEM](siem.md)
+[Back to README](../README.md) · [Multi-cloud](multicloud.md) · [Terraform](terraform.md) · [Access](access.md) · [Architecture](architecture.md) · [Metrics](metrics.md) · [SIEM](siem.md)
 
-Each exercise lists what to run and what you should see. Most map to Vault Operations Advanced objectives: monitoring (2), fault tolerance (4), performance (6), access control (7).
+Each exercise lists what to run and what you should see. Most map to Vault Operations Advanced objectives: monitoring (2), fault tolerance (4), performance (6), access control (7). Exercises 10 and 11 cover Terraform with Vault.
 
 Set this once in your shell:
 
@@ -98,6 +98,27 @@ EOF
 
 Terraform shows the change on cloud-b only. Find the same change in Wazuh (rule 100142, location `/var/log/vault-b/audit.log`), then `./lab.sh tf apply` to restore it. Open the "Vault multi-cloud" dashboard and compare the two clusters. See [multicloud.md](multicloud.md).
 
-## 10. Write your own detection
+## 10. Keep secrets out of Terraform state
+
+```bash
+./lab.sh tf state-secrets apply
+./lab.sh secrets-check
+grep -c lab-demo-S3cret-4242 terraform/state-secrets/terraform.tfstate
+```
+
+Three resources show `IN STATE` (the classic resource, the data source and the resource fed by it) and the ephemeral and write-only ones show `clean`, although Vault holds the same values for both. Then break it on purpose: copy `terraform/state-secrets` to a scratch folder, put `ephemeral.vault_kv_secret_v2.read.data["password"]` into a normal `data_json` argument and run `terraform validate`; it fails with "Invalid use of ephemeral value". Finally rotate: `./lab.sh tf state-secrets apply -var secret_version=2` and read `tfdemo/app/db` again. See [terraform.md](terraform.md#2-secrets-in-state).
+
+## 11. Adopt hand-made config into Terraform
+
+```bash
+cp terraform/adopt/stages/1-policies.tf terraform/adopt/
+./lab.sh tf adopt plan -generate-config-out=generated-1.tf
+./lab.sh tf adopt plan
+./lab.sh tf adopt apply
+```
+
+Repeat for stages 2 to 5. Apply only when the plan says import. Expect two surprises: the generated userpass config in stage 3 fails validation until you delete its `tune` block, and stage 4 needs each user's `password_wo` set from the variable in `4-users.tf`, after which the plan shows in-place changes because the passwords are written again. At the end, change a user by hand (`vault write auth/userpass/users/bob token_policies=app,default`) and watch `plan` catch it. See [terraform.md](terraform.md#3-adopting-configuration-that-already-exists).
+
+## 12. Write your own detection
 
 Add a rule that alerts when someone reads `secret/data/admin/break-glass` successfully, test it with `wazuh-logtest`, restart the manager and trigger it with the root token.

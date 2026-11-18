@@ -12,6 +12,8 @@
 #   ./lab.sh upgrade V  rolling upgrade to Vault version V (for example 1.20.4)
 #   ./lab.sh multicloud up|down|status   second independent cluster ("cloud-b") on 8300-8320
 #   ./lab.sh tf plan|apply|...           Terraform baseline applied to both clusters
+#   ./lab.sh tf state-secrets|adopt ...  Terraform demos (secrets in state, importing existing config)
+#   ./lab.sh secrets-check               which Terraform resources hold the demo password in state
 #   ./lab.sh token b    print the root token of cloud-b
 #   ./lab.sh down       stop (keeps data)
 #   ./lab.sh reset      stop and delete ALL data, secrets and Wazuh certs
@@ -117,23 +119,62 @@ JSON
   esac
 }
 
-tf() {   # run Terraform in terraform/multicloud against both clusters
-  local dir=terraform/multicloud
-  [ -n "$(root_token_b)" ] || { echo "cloud-b is not initialized. Run: ./lab.sh multicloud up"; exit 1; }
+# ------------------------------------------------------------ terraform
+# Terraform does not run as root. Root (the bootstrap credential) writes the
+# "terraform" policy once, then every run gets a fresh 30-minute token with it.
+TF_DIRS="multicloud state-secrets adopt"
+
+tf_token() {   # tf_token a|b  -> short-lived token with the terraform policy
+  local svc=vault-1 tok mc="docker compose"
+  tok=$(root_token)
+  if [ "$1" = "b" ]; then svc=vaultb-1; tok=$(root_token_b); mc=$MC; fi
+  [ -n "$tok" ] || return 0
+  $mc exec -T -e VAULT_TOKEN="$tok" "$svc" vault policy write terraform - \
+    < terraform/terraform-policy.hcl >/dev/null
+  $mc exec -T -e VAULT_TOKEN="$tok" "$svc" vault token create -policy=terraform \
+    -ttl=30m -display-name=terraform -field=token
+}
+
+tf() {   # ./lab.sh tf [multicloud|state-secrets|adopt] <terraform args>
+  local name=multicloud
+  case " $TF_DIRS " in *" ${1:-} "*) name=$1; shift ;; esac
+  local dir=terraform/$name
+  [ $# -gt 0 ] || { echo "usage: ./lab.sh tf [${TF_DIRS// /|}] plan|apply|destroy|..."; exit 1; }
+  [ -n "$(root_token)" ] || { echo "cloud-a is not initialized. Run: ./lab.sh up"; exit 1; }
+  if [ "$name" = multicloud ] && [ -z "$(root_token_b)" ]; then
+    echo "cloud-b is not initialized. Run: ./lab.sh multicloud up"; exit 1
+  fi
+  local ta tb
+  ta=$(tf_token a); tb=$(tf_token b)
   if command -v terraform >/dev/null 2>&1; then
     ( cd "$dir"
       [ -d .terraform ] || terraform init -input=false >/dev/null
-      TF_VAR_cloud_a_token="$(cd ../.. && root_token)" TF_VAR_cloud_b_token="$(cd ../.. && root_token_b)" \
+      TF_VAR_cloud_a_token="$ta" TF_VAR_cloud_b_token="$tb" \
       TF_VAR_cloud_a_address="http://localhost:$VAULT_PORT" TF_VAR_cloud_b_address="http://localhost:$VAULTB1_PORT" \
       terraform "$@" )
   else   # no local Terraform: use the official image on the lab network
     local run="docker run --rm --network vault-lab_default -v $PWD/$dir:/work -w /work \
-      -e TF_VAR_cloud_a_token=$(root_token) -e TF_VAR_cloud_b_token=$(root_token_b) \
+      -e TF_VAR_cloud_a_token=$ta -e TF_VAR_cloud_b_token=$tb \
       -e TF_VAR_cloud_a_address=http://vault-1:8200 -e TF_VAR_cloud_b_address=http://vaultb-1:8200 \
       hashicorp/terraform:${TERRAFORM_VERSION:-1.17}"
     [ -d "$dir/.terraform" ] || $run init -input=false >/dev/null
     $run "$@"
   fi
+}
+
+secrets_check() {   # where does the demo password end up? (terraform/state-secrets)
+  local f=terraform/state-secrets/terraform.tfstate pw=lab-demo-S3cret-4242
+  [ -f "$f" ] || { echo "Run first: ./lab.sh tf state-secrets apply"; exit 1; }
+  echo "Resources in $f and whether the demo password ($pw) is stored with them:"
+  awk -v pw="$pw" '
+    # resource headers sit at a fixed indent in the state JSON (6 spaces)
+    /^      "mode": / { m = ($0 ~ /"data"/) ? "data." : "" }
+    /^      "type": / { t = $0; sub(/.*"type": "/, "", t); sub(/".*/, "", t) }
+    /^      "name": / { n = $0; sub(/.*"name": "/, "", n); sub(/".*/, "", n); a = m t "." n; seen[a] = 0; order[++k] = a }
+    index($0, pw) && a != "" { seen[a]++ }
+    END { for (i = 1; i <= k; i++) printf "  %-9s %s\n", (seen[order[i]] ? "IN STATE" : "clean"), order[i] }
+  ' "$f"
+  echo "Plain-text copies in the file: $(grep -c "$pw" "$f" || true)"
 }
 
 # ------------------------------------------------------------ upgrade helpers
@@ -273,6 +314,8 @@ case "${1:-}" in
     multicloud "${2:-}" ;;
   tf)
     shift; tf "$@" ;;
+  secrets-check)
+    secrets_check ;;
   unseal)
     docker compose up -d --force-recreate vault-init
     docker compose wait vault-init >/dev/null 2>&1 || true
@@ -294,8 +337,11 @@ case "${1:-}" in
     rm -f secrets/init.json secrets/loadgen-token secrets/.seeded
     rm -rf secrets/cloud-b
     echo '[]' > prometheus/targets/cloud-b.json
-    rm -rf terraform/multicloud/.terraform terraform/multicloud/terraform.tfstate*
+    for d in multicloud state-secrets adopt; do
+      rm -rf terraform/$d/.terraform terraform/$d/terraform.tfstate* terraform/$d/generated-*.tf
+    done
+    rm -rf terraform/adopt/[0-9]-*.tf terraform/adopt/policies.tf terraform/adopt/policies
     rm -rf "$CERTS" ;;
   *)
-    sed -n '2,18p' "$0" ;;
+    sed -n '2,19p' "$0" ;;
 esac

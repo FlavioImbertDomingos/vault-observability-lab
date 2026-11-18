@@ -1,6 +1,6 @@
 # Troubleshooting
 
-[Back to README](../README.md) · [Multi-cloud](multicloud.md) · [Access](access.md)
+[Back to README](../README.md) · [Multi-cloud](multicloud.md) · [Terraform](terraform.md) · [Access](access.md)
 
 | Symptom | Fix |
 |---|---|
@@ -11,6 +11,9 @@
 | Vault SIEM dashboard missing | `./lab.sh dashboards` |
 | Wazuh indexer keeps restarting | Give Docker at least 6 GB of memory. On Linux: `sudo sysctl -w vm.max_map_count=262144`. |
 | Grafana tiles show "No data" | Usage gauges appear after a minute or two; quota and lockout series only after the first event. |
+| Terraform: `permission denied` (403) on a path | Terraform runs with the `terraform` policy, not root. Add the path to `terraform/terraform-policy.hcl`; the next `./lab.sh tf` run writes it. |
+| Terraform: `Error generating AppRole SecretID` or 404 reading a secret on the first apply | An ephemeral resource was opened during plan, before what it reads existed. Set its `mount_id` to the mount's id so it waits for apply (see `terraform/state-secrets/main.tf`). |
+| `terraform/adopt`: `expected tune.0.listing_visibility to be one of ["unauth" "hidden"]` | Generated config for the userpass mount is invalid. Delete the `tune` block from the generated file. |
 | Docker Hub `429 Too Many Requests` | `docker login`, then try again. |
 | Permission denied running `./lab.sh` | `chmod +x lab.sh vault/scripts/*.sh wazuh/gen-certs.sh` |
 | Start over | `./lab.sh reset` deletes all data, secrets and certificates. |

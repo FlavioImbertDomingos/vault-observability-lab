@@ -11,13 +11,13 @@ variable "cloud_b_address" {
 }
 
 variable "cloud_a_token" {
-  description = "Token for cloud-a (lab: root token from ./lab.sh token)"
+  description = "Token for cloud-a (lab: ./lab.sh tf mints a 30-minute token with the terraform policy)"
   type        = string
   sensitive   = true
 }
 
 variable "cloud_b_token" {
-  description = "Token for cloud-b (lab: ./lab.sh token b)"
+  description = "Token for cloud-b (same, minted on cloud-b)"
   type        = string
   sensitive   = true
 }

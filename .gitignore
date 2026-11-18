@@ -10,3 +10,8 @@ terraform/**/.terraform/
 terraform/**/terraform.tfstate*
 terraform/**/.terraform.lock.hcl
 prometheus/targets/*.json
+# adopt exercise workspace: stage copies, generated config and exported policies
+terraform/adopt/[0-9]-*.tf
+terraform/adopt/generated-*.tf
+terraform/adopt/policies.tf
+terraform/adopt/policies/
