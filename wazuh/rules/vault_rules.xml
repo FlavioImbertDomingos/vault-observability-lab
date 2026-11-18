@@ -42,6 +42,25 @@
     <group>authentication_failures,pci_dss_11.4,pci_dss_10.2.4,</group>
   </rule>
 
+  <!-- OIDC/JWT: a failed callback has no top-level "error"; the reason is in
+       response.data.error, HMAC-hashed like every other response value -->
+  <rule id="100112" level="5">
+    <if_sid>100101</if_sid>
+    <field name="request.path" type="pcre2">^auth/.+/oidc/callback$</field>
+    <field name="response.data.error" type="pcre2">.</field>
+    <description>Vault: failed OIDC login on $(request.path) from $(request.remote_address)</description>
+    <mitre><id>T1110</id></mitre>
+    <group>authentication_failed,pci_dss_10.2.4,pci_dss_10.2.5,</group>
+  </rule>
+
+  <rule id="100113" level="10" frequency="6" timeframe="120">
+    <if_matched_sid>100112</if_matched_sid>
+    <same_field>request.path</same_field>
+    <description>Vault: 6+ failed OIDC logins on $(request.path) in 2 minutes</description>
+    <mitre><id>T1110</id></mitre>
+    <group>authentication_failures,pci_dss_11.4,pci_dss_10.2.4,</group>
+  </rule>
+
   <!-- authorization -->
   <rule id="100120" level="5">
     <if_sid>100101</if_sid>

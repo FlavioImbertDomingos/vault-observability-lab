@@ -88,7 +88,7 @@ const INFO = {
   'Prometheus': { tag:'prometheus v3.16.0 · port 9090', html:`<p>Scrapes every Vault node every 15 s and evaluates 11 alert rules based on HashiCorp's monitoring guidance: sealed node, no active node, leadership lost, Raft fault tolerance, audit failures, root token created, latency, GC pause, lease count, 429s.</p><p><code>prometheus/rules/vault-alerts.yml</code></p>` },
   'Grafana': { tag:'grafana 13.2.6 · port 3000', html:`<p>"Vault overview" dashboard, provisioned automatically: cluster health, requests, usage and capacity, Raft storage and runtime. 42 panels.</p><p><code>grafana/build_dashboard.py</code> generates the JSON.</p>` },
   'Shared volume': { tag:'docker volume vault-audit', html:`<p>Holds <code>audit.log</code> (file audit device, JSON, mode 0640) and <code>vault-1..3.log</code> (server logs, JSON). A sidecar rotates the audit log at 200 MB.</p><p>Some events, such as rekey, never reach the audit log because those endpoints are unauthenticated. The server log catches them.</p>` },
-  'Wazuh manager': { tag:'wazuh-manager 4.14.10', html:`<p>Reads the audit and server logs as JSON and applies 18 custom rules (1001xx audit, 1002xx server): failed logins, brute force, lockout, permission denied, 429s, root token use and issuance, privileged endpoints, audit/policy/mount changes, sealed node, leader change.</p><p><code>wazuh/rules/vault_rules.xml</code></p>` },
+  'Wazuh manager': { tag:'wazuh-manager 4.14.10', html:`<p>Reads the audit and server logs as JSON and applies 20 custom rules (1001xx audit, 1002xx server): failed logins (userpass and OIDC), brute force, lockout, permission denied, 429s, root token use and issuance, privileged endpoints, audit/policy/mount changes, sealed node, leader change.</p><p><code>wazuh/rules/vault_rules.xml</code></p>` },
   'Wazuh indexer': { tag:'wazuh-indexer 4.14.10 (OpenSearch)', html:`<p>Stores alerts. Normal traffic is decoded at level 0 and never indexed, so only findings take space.</p>` },
   'Wazuh dashboard': { tag:'wazuh-dashboard 4.14.10 · port 8443', html:`<p>Threat Hunting plus the imported "Vault SIEM" dashboard: headline counts, timeline by rule, levels, identities, paths, failed logins by source, server log findings, event list.</p>` },
 };
@@ -223,7 +223,7 @@ function welcome() {
   <div class="tag">docker compose · one command: <code>./lab.sh up</code></div>
   <ul><li><b>Vault</b>: 3 Raft nodes, initialized, unsealed and seeded automatically</li>
   <li><b>Metrics</b>: Prometheus scrapes every node; Grafana shows 42 panels; 11 alert rules</li>
-  <li><b>SIEM</b>: Wazuh reads the audit log and server logs; 18 custom rules; a Vault SIEM dashboard</li>
+  <li><b>SIEM</b>: Wazuh reads the audit log and server logs; 20 custom rules; a Vault SIEM dashboard</li>
   <li><b>Traffic</b>: a load generator, plus an incident script for the SIEM</li></ul>
   <p>Click any component for details, or try the buttons below.</p>`;
 }

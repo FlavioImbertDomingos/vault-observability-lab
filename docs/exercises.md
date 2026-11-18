@@ -1,8 +1,8 @@
 # Exercises
 
-[Back to README](../README.md) · [Multi-cloud](multicloud.md) · [Terraform](terraform.md) · [Access](access.md) · [Architecture](architecture.md) · [Metrics](metrics.md) · [SIEM](siem.md)
+[Back to README](../README.md) · [Multi-cloud](multicloud.md) · [Terraform](terraform.md) · [OIDC](oidc.md) · [Access](access.md) · [Architecture](architecture.md) · [Metrics](metrics.md) · [SIEM](siem.md)
 
-Each exercise lists what to run and what you should see. Most map to Vault Operations Advanced objectives: monitoring (2), fault tolerance (4), performance (6), access control (7). Exercises 10 and 11 cover Terraform with Vault.
+Each exercise lists what to run and what you should see. Most map to Vault Operations Advanced objectives: monitoring (2), fault tolerance (4), performance (6), access control (7). Exercises 10 and 11 cover Terraform with Vault, exercise 12 OIDC logins.
 
 Set this once in your shell:
 
@@ -119,6 +119,17 @@ cp terraform/adopt/stages/1-policies.tf terraform/adopt/
 
 Repeat for stages 2 to 5. Apply only when the plan says import. Expect two surprises: the generated userpass config in stage 3 fails validation until you delete its `tune` block, and stage 4 needs each user's `password_wo` set from the variable in `4-users.tf`, after which the plan shows in-place changes because the passwords are written again. At the end, change a user by hand (`vault write auth/userpass/users/bob token_policies=app,default`) and watch `plan` catch it. See [terraform.md](terraform.md#3-adopting-configuration-that-already-exists).
 
-## 12. Write your own detection
+## 12. Log in through an identity provider
+
+```bash
+echo '127.0.0.1 keycloak' | sudo tee -a /etc/hosts   # once
+./lab.sh oidc up
+vault login -method=oidc        # sign in as oscar / oscar-pass
+vault kv put secret/team/x a=b  # 403: oscar is in vault-readers
+```
+
+Now, in the Keycloak admin console (http://keycloak:8180, admin / admin, realm lab), add oscar to `vault-admins`, log in again and repeat the `kv put`: it works, and nothing changed in Vault. Then log in as nora (no group) and read the refusal. Finally fail six logins in a row and find rules 100112 and 100113 in Wazuh, then use `sys/audit-hash/file` to prove which error message the hashed `response.data.error` holds. See [oidc.md](oidc.md).
+
+## 13. Write your own detection
 
 Add a rule that alerts when someone reads `secret/data/admin/break-glass` successfully, test it with `wazuh-logtest`, restart the manager and trigger it with the root token.

@@ -1,6 +1,6 @@
 # Terraform and Vault: identity, secrets in state, adopting existing config
 
-[Back to README](../README.md) · [Multi-cloud](multicloud.md) · [Access](access.md) · [Exercises](exercises.md) · [Troubleshooting](troubleshooting.md)
+[Back to README](../README.md) · [Multi-cloud](multicloud.md) · [OIDC](oidc.md) · [Access](access.md) · [Exercises](exercises.md) · [Troubleshooting](troubleshooting.md)
 
 Three things go wrong often when Terraform manages Vault: Terraform runs with the root token, secrets end up in the state file in plain text, and teams with an existing cluster cannot see how to bring it under code without breaking it. The lab has one piece for each.
 

@@ -1,6 +1,6 @@
 # Metrics: Prometheus and Grafana
 
-[Back to README](../README.md) · [Access](access.md) · [Architecture](architecture.md) · [SIEM](siem.md) · [Upgrades](upgrades.md) · [Multi-cloud](multicloud.md) · [Terraform](terraform.md) · [Exercises](exercises.md)
+[Back to README](../README.md) · [Access](access.md) · [Architecture](architecture.md) · [SIEM](siem.md) · [Upgrades](upgrades.md) · [Multi-cloud](multicloud.md) · [Terraform](terraform.md) · [OIDC](oidc.md) · [Exercises](exercises.md)
 
 ![Grafana Vault overview](img/grafana-vault-overview.png)
 

@@ -14,12 +14,13 @@ Interactive 3D view: [`docs/index.html`](docs/index.html) (rotate, zoom, click a
 |---|---|
 | Vault | 3 Raft nodes on 1.19.5, initialized, unsealed and seeded automatically; audit device and JSON server logs |
 | Metrics | Prometheus scraping every node, 11 alert rules, a Grafana dashboard with 42 panels |
-| SIEM | Wazuh manager, indexer and dashboard; 18 custom rules for Vault audit and server logs; a "Vault SIEM" dashboard |
+| SIEM | Wazuh manager, indexer and dashboard; 20 custom rules for Vault audit and server logs; a "Vault SIEM" dashboard |
 | Traffic | Load generator (logins, KV, transit, tokens, quota bursts) and `./lab.sh incident` |
 | Upgrades | `./lab.sh upgrade <version>`: rolling upgrade, standbys first, active node last, snapshot and health gates; an Ansible playbook for real servers |
 | Multi-cloud | `./lab.sh multicloud up` adds a second independent cluster; Terraform applies one baseline to both and detects drift; Grafana and Wazuh show both |
+| OIDC | `./lab.sh oidc up` adds Keycloak; people log in with `vault login -method=oidc` or the UI, and their Keycloak group decides their Vault policies |
 | Terraform | Runs with its own least-privilege policy and a 30-minute token, never root; a demo of secrets in state next to ephemeral resources and write-only arguments; a staged exercise that imports hand-made config |
-| Docs | [Accessing Vault](docs/access.md), [Multi-cloud](docs/multicloud.md), [Terraform](docs/terraform.md), [Architecture](docs/architecture.md), [Metrics](docs/metrics.md), [SIEM](docs/siem.md), [Upgrades](docs/upgrades.md), [Exercises](docs/exercises.md), [Troubleshooting](docs/troubleshooting.md) |
+| Docs | [Accessing Vault](docs/access.md), [Multi-cloud](docs/multicloud.md), [Terraform](docs/terraform.md), [OIDC](docs/oidc.md), [Architecture](docs/architecture.md), [Metrics](docs/metrics.md), [SIEM](docs/siem.md), [Upgrades](docs/upgrades.md), [Exercises](docs/exercises.md), [Troubleshooting](docs/troubleshooting.md) |
 
 ## Screenshots
 
@@ -75,6 +76,7 @@ Less memory? `./lab.sh core` runs Vault, Prometheus and Grafana only (about 1 GB
 | `./lab.sh tf state-secrets apply` | Demo: which Terraform patterns leave secrets in the state file |
 | `./lab.sh secrets-check` | Show which resources hold the demo password in state |
 | `./lab.sh tf adopt plan` | Exercise: import hand-made config into Terraform in stages |
+| `./lab.sh oidc up` | Start Keycloak and configure OIDC logins in Vault |
 | `./lab.sh token b` | Root token of cloud-b |
 | `./lab.sh down` | Stop, keep data |
 | `./lab.sh reset` | Delete all data, secrets and certificates |
@@ -98,7 +100,7 @@ vault login -method=userpass username=alice password=alice-pass
 docker compose exec -e VAULT_TOKEN=$(./lab.sh token) vault-2 vault status
 ```
 
-The web UI is at http://localhost:8200 (token from `./lab.sh token`, or alice / alice-pass). All options, credentials and first commands: [docs/access.md](docs/access.md).
+The web UI is at http://localhost:8200 (token from `./lab.sh token`, or alice / alice-pass, or OIDC after `./lab.sh oidc up`). All options, credentials and first commands: [docs/access.md](docs/access.md).
 
 ## How it works
 
@@ -167,9 +169,25 @@ Terraform never gets the root token: each `./lab.sh tf` run hands it a 30-minute
 
 `sensitive = true` only hides a value on screen. Ephemeral resources (Terraform 1.10) and write-only arguments (1.11) keep it out of `terraform.tfstate`; the demo shows both, including an AppRole SecretID that never reaches state. `terraform/adopt/` brings config that was created by hand under Terraform in five stages with `import` blocks and `-generate-config-out`, lowest risk first. Results, what broke along the way and the rules we kept: [docs/terraform.md](docs/terraform.md).
 
+## OIDC logins with Keycloak
+
+```bash
+echo '127.0.0.1 keycloak' | sudo tee -a /etc/hosts   # once
+./lab.sh oidc up
+vault login -method=oidc     # olivia / olivia-pass in the browser
+```
+
+Keycloak runs as one more container with a realm imported from `oidc/realm-lab.json`: a `vault` client, groups `vault-admins` and `vault-readers`, and three users. Vault's role grants only `default`; the rest comes from external groups mapped to the Keycloak groups, so moving a user between groups in Keycloak changes their Vault access at the next login.
+
+| Keycloak sign-in, opened from the Vault UI | Signed in as olivia |
+|---|---|
+| ![Keycloak](docs/img/oidc-keycloak-login.png) | ![Vault UI](docs/img/oidc-vault-ui.png) |
+
+Testing it turned up two things: a user in no group cannot log in at all (Keycloak omits the claim, Vault refuses), and failed OIDC logins were invisible to the existing failed-login rule, so Wazuh has two new rules for them. Details, the hosts entry explained and settings for Entra ID, Okta and Google: [docs/oidc.md](docs/oidc.md).
+
 ## Exercises
 
-Failover, incident response, rate limits, lease growth, Raft quorum, audit HMAC search, planned leader change, rolling upgrade, multi-cloud drift, secrets in Terraform state, adopting hand-made config, writing your own detection. See [docs/exercises.md](docs/exercises.md).
+Failover, incident response, rate limits, lease growth, Raft quorum, audit HMAC search, planned leader change, rolling upgrade, multi-cloud drift, secrets in Terraform state, adopting hand-made config, OIDC logins, writing your own detection. See [docs/exercises.md](docs/exercises.md).
 
 ## Lab only
 
@@ -179,10 +197,11 @@ This is a learning environment. Do not copy these settings to production:
 - One unseal key, threshold 1, root token stored in `secrets/init.json` (git-ignored).
 - Wazuh uses its stock demo passwords and a self-signed CA generated by `wazuh/gen-certs.sh`.
 - Wazuh vulnerability detection is off (its feed is about 8 GB).
+- Keycloak runs in development mode over HTTP with an admin / admin login and a fixed client secret.
 
 ## Versions
 
-Vault 1.19.5, Prometheus 3.16.0, Grafana 13.2.6, Wazuh 4.14.10. Override with `VAULT_VERSION`, `PROMETHEUS_VERSION`, `GRAFANA_VERSION`, `WAZUH_VERSION` in `.env`.
+Vault 1.19.5, Prometheus 3.16.0, Grafana 13.2.6, Wazuh 4.14.10, Keycloak 26.4. Override with `VAULT_VERSION`, `PROMETHEUS_VERSION`, `GRAFANA_VERSION`, `WAZUH_VERSION`, `KEYCLOAK_VERSION` in `.env`.
 
 ## License
 

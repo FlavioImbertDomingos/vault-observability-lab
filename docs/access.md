@@ -1,6 +1,6 @@
 # Accessing Vault
 
-[Back to README](../README.md) · [Architecture](architecture.md) · [Upgrades](upgrades.md) · [Multi-cloud](multicloud.md) · [Terraform](terraform.md) · [Exercises](exercises.md) · [Troubleshooting](troubleshooting.md)
+[Back to README](../README.md) · [Architecture](architecture.md) · [Upgrades](upgrades.md) · [Multi-cloud](multicloud.md) · [Terraform](terraform.md) · [OIDC](oidc.md) · [Exercises](exercises.md) · [Troubleshooting](troubleshooting.md)
 
 Each node has its own port on your machine, so you can reach any of them directly:
 
@@ -19,6 +19,7 @@ Ports can be changed in `.env` (`VAULT_PORT`, `VAULT2_PORT`, `VAULT3_PORT`). Sta
 | Root | token from `./lab.sh token` | everything (lab only) |
 | alice, bob | userpass, passwords `alice-pass`, `bob-pass` | policy `app`: read `secret/app/*`, transit on `payments` |
 | carol | userpass, password `carol-pass` | same as alice; target of `./lab.sh incident`, so she is locked out for 15 minutes after it runs |
+| olivia, oscar, nora | OIDC through Keycloak, after `./lab.sh oidc up`; passwords `olivia-pass`, `oscar-pass`, `nora-pass` | from their Keycloak group: olivia `secrets-admin`, oscar `app`, nora refused (no group). See [oidc.md](oidc.md) |
 
 ## Option 1: Vault CLI on your machine
 
@@ -88,6 +89,7 @@ Open http://localhost:8200 (or 8210, 8220).
 
 - Root: Method "Token", paste the output of `./lab.sh token`.
 - User: Method "Username", for example alice / alice-pass.
+- OIDC (after `./lab.sh oidc up`): Method "OIDC", role empty, "Sign in with OIDC Provider", then olivia / olivia-pass in the Keycloak window.
 
 Logged in as root, "Raft Storage" shows the three peers and their state, and "Secrets Engines" lets you browse `secret/` and `noisy/`.
 

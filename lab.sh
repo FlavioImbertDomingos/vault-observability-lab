@@ -14,6 +14,7 @@
 #   ./lab.sh tf plan|apply|...           Terraform baseline applied to both clusters
 #   ./lab.sh tf state-secrets|adopt ...  Terraform demos (secrets in state, importing existing config)
 #   ./lab.sh secrets-check               which Terraform resources hold the demo password in state
+#   ./lab.sh oidc up|down|status         Keycloak as OIDC provider, Vault logins mapped from its groups
 #   ./lab.sh token b    print the root token of cloud-b
 #   ./lab.sh down       stop (keeps data)
 #   ./lab.sh reset      stop and delete ALL data, secrets and Wazuh certs
@@ -81,7 +82,9 @@ CORE_PORTS="VAULT_PORT VAULT2_PORT VAULT3_PORT PROMETHEUS_PORT GRAFANA_PORT"
 VAULTB1_PORT=${VAULTB1_PORT:-8300}; VAULTB2_PORT=${VAULTB2_PORT:-8310}; VAULTB3_PORT=${VAULTB3_PORT:-8320}
 B_PORTS="VAULTB1_PORT VAULTB2_PORT VAULTB3_PORT"
 B_SERVICES="vaultb-1 vaultb-2 vaultb-3 vaultb-init loadgen-b"
-MC="docker compose --profile multicloud"
+MC="docker compose --profile multicloud --profile oidc"   # down/reset cover every profile
+KEYCLOAK_PORT=${KEYCLOAK_PORT:-8180}
+OIDC="docker compose --profile oidc"
 
 # ------------------------------------------------------------ multi-cloud helpers
 versions_b() {
@@ -116,6 +119,44 @@ JSON
     status|"")
       echo "cloud-a:"; versions; echo "cloud-b:"; versions_b ;;
     *) echo "Usage: ./lab.sh multicloud up|down|status"; exit 1 ;;
+  esac
+}
+
+# ------------------------------------------------------------ OIDC (Keycloak)
+oidc() {
+  local url="http://keycloak:$KEYCLOAK_PORT/realms/lab"
+  case "${1:-}" in
+    up)
+      [ -n "$(root_token)" ] || { echo "cloud-a is not initialized. Run: ./lab.sh up"; exit 1; }
+      check_ports KEYCLOAK_PORT
+      $OIDC up -d keycloak
+      printf "Waiting for Keycloak"
+      local i
+      for i in $(seq 1 90); do
+        [ "$(docker inspect -f '{{.State.Health.Status}}' "$($OIDC ps -q keycloak)" 2>/dev/null)" = healthy ] && break
+        printf "."; sleep 2
+      done; echo
+      docker compose cp oidc/secrets-admin.hcl vault-1:/tmp/secrets-admin.hcl >/dev/null 2>&1
+      docker compose exec -T -e VAULT_TOKEN="$(root_token)" -e OIDC_URL="$url" \
+        -e CLIENT_SECRET="${KEYCLOAK_CLIENT_SECRET:-vault-lab-oidc-secret}" \
+        -e VAULT_PORTS="$VAULT_PORT $VAULT2_PORT $VAULT3_PORT" vault-1 sh -s < oidc/configure-vault.sh
+      echo
+      if ! curl -s -o /dev/null --max-time 3 "$url/.well-known/openid-configuration"; then
+        echo "This machine cannot open $url yet. Add the host name once:"
+        echo "  echo '127.0.0.1 keycloak' | sudo tee -a /etc/hosts"
+        echo
+      fi
+      echo "Keycloak:  http://keycloak:$KEYCLOAK_PORT  (admin console: admin / ${KEYCLOAK_ADMIN_PASSWORD:-admin})"
+      echo "Users:     olivia / olivia-pass (vault-admins), oscar / oscar-pass (vault-readers), nora / nora-pass (no group)"
+      echo "Log in:    vault login -method=oidc    or the Vault UI, method OIDC" ;;
+    down)
+      $OIDC rm -sf keycloak >/dev/null 2>&1   # Keycloak keeps its data in the container; the realm is re-imported on the next up
+      echo "Keycloak stopped and removed. Vault keeps auth/oidc; ./lab.sh oidc up brings Keycloak back." ;;
+    status|"")
+      $OIDC ps keycloak
+      curl -s --max-time 3 "http://localhost:$KEYCLOAK_PORT/realms/lab/.well-known/openid-configuration" \
+        | grep -o '"issuer":"[^"]*"' || echo "Keycloak is not answering on port $KEYCLOAK_PORT" ;;
+    *) echo "Usage: ./lab.sh oidc up|down|status"; exit 1 ;;
   esac
 }
 
@@ -316,6 +357,8 @@ case "${1:-}" in
     shift; tf "$@" ;;
   secrets-check)
     secrets_check ;;
+  oidc)
+    shift; oidc "$@" ;;
   unseal)
     docker compose up -d --force-recreate vault-init
     docker compose wait vault-init >/dev/null 2>&1 || true
@@ -343,5 +386,5 @@ case "${1:-}" in
     rm -rf terraform/adopt/[0-9]-*.tf terraform/adopt/policies.tf terraform/adopt/policies
     rm -rf "$CERTS" ;;
   *)
-    sed -n '2,19p' "$0" ;;
+    sed -n '2,20p' "$0" ;;
 esac

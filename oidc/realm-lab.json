@@ -1,0 +1,79 @@
+{
+  "realm": "lab",
+  "displayName": "Vault lab",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "bruteForceProtected": true,
+  "groups": [
+    { "name": "vault-admins" },
+    { "name": "vault-readers" }
+  ],
+  "users": [
+    {
+      "username": "olivia",
+      "enabled": true,
+      "email": "olivia@vault-lab.local",
+      "emailVerified": true,
+      "firstName": "Olivia",
+      "lastName": "Admin",
+      "credentials": [{ "type": "password", "value": "olivia-pass", "temporary": false }],
+      "groups": ["/vault-admins"]
+    },
+    {
+      "username": "oscar",
+      "enabled": true,
+      "email": "oscar@vault-lab.local",
+      "emailVerified": true,
+      "firstName": "Oscar",
+      "lastName": "Reader",
+      "credentials": [{ "type": "password", "value": "oscar-pass", "temporary": false }],
+      "groups": ["/vault-readers"]
+    },
+    {
+      "username": "nora",
+      "enabled": true,
+      "email": "nora@vault-lab.local",
+      "emailVerified": true,
+      "firstName": "Nora",
+      "lastName": "Nogroup",
+      "credentials": [{ "type": "password", "value": "nora-pass", "temporary": false }]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "vault",
+      "name": "HashiCorp Vault",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${KC_VAULT_CLIENT_SECRET}",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://localhost:8250/oidc/callback",
+        "http://localhost:${VAULT_PORT}/ui/vault/auth/oidc/oidc/callback",
+        "http://localhost:${VAULT2_PORT}/ui/vault/auth/oidc/oidc/callback",
+        "http://localhost:${VAULT3_PORT}/ui/vault/auth/oidc/oidc/callback"
+      ],
+      "webOrigins": ["+"],
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -61,7 +61,7 @@ def table(vid, title, query, fields, x, y, w, h=14, size=10):
 # headline counts
 metric("vault-m-all", "Vault alerts", "rule.groups:vault", 0)
 metric("vault-m-high", "Level 10+", "rule.groups:vault and rule.level >= 10", 8)
-metric("vault-m-login", "Failed logins", "rule.id:100110", 16)
+metric("vault-m-login", "Failed logins", "rule.id:(100110 or 100112)", 16)
 metric("vault-m-root", "Root token events", "rule.groups:vault_root", 24)
 metric("vault-m-priv", "Privileged operations", "rule.groups:vault_privileged", 32)
 metric("vault-m-denied", "Permission denied", "rule.id:100120", 40)
@@ -99,7 +99,7 @@ table("vault-top-rules", "Top Vault rules", "rule.groups:vault", ["rule.id", "ru
 table("vault-identities", "Identities in alerts", "rule.groups:vault and data.auth.display_name:*",
       ["data.auth.display_name"], 0, 35, 16)
 table("vault-paths", "Paths in alerts", "rule.groups:vault and data.request.path:*", ["data.request.path"], 16, 35, 16)
-table("vault-failed", "Failed logins by path and source", "rule.id:100110",
+table("vault-failed", "Failed logins by path and source", "rule.id:(100110 or 100112)",
       ["data.request.path", "data.request.remote_address"], 32, 35, 16)
 table("vault-server", "Server log findings by node", "rule.groups:vault_server", ["rule.description", "location"],
       0, 49, 28, h=12)

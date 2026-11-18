@@ -1,6 +1,6 @@
 # Multi-cloud with independent clusters
 
-[Back to README](../README.md) · [Terraform](terraform.md) · [Access](access.md) · [Architecture](architecture.md) · [Upgrades](upgrades.md) · [Exercises](exercises.md)
+[Back to README](../README.md) · [Terraform](terraform.md) · [OIDC](oidc.md) · [Access](access.md) · [Architecture](architecture.md) · [Upgrades](upgrades.md) · [Exercises](exercises.md)
 
 ![Grafana: Vault multi-cloud](img/grafana-multicloud.png)
 

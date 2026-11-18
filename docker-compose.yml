@@ -152,6 +152,32 @@ services:
       vaultb-init: { condition: service_completed_successfully }
 
   # ----------------------------------------------------------- Metrics
+  # OIDC identity provider for human logins (./lab.sh oidc up). Users, groups and the
+  # vault client come from oidc/realm-lab.json. The browser and the Vault containers must
+  # reach it at the same URL, http://keycloak:<port>: add "127.0.0.1 keycloak" to /etc/hosts.
+  keycloak:
+    image: quay.io/keycloak/keycloak:${KEYCLOAK_VERSION:-26.4}
+    profiles: [oidc]
+    command: start-dev --import-realm --http-port=${KEYCLOAK_PORT:-8180} --hostname=http://keycloak:${KEYCLOAK_PORT:-8180}
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      KC_HEALTH_ENABLED: "true"
+      KC_VAULT_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-vault-lab-oidc-secret}
+      VAULT_PORT: ${VAULT_PORT:-8200}
+      VAULT2_PORT: ${VAULT2_PORT:-8210}
+      VAULT3_PORT: ${VAULT3_PORT:-8220}
+    volumes:
+      - ./oidc/realm-lab.json:/opt/keycloak/data/import/realm-lab.json:ro
+    ports:
+      - "${KEYCLOAK_PORT:-8180}:${KEYCLOAK_PORT:-8180}"
+    healthcheck:
+      # management interface (port 9000) serves /health/ready; the image has bash but no curl
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.0\r\n\r\n' >&3 && grep -q UP <&3"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+
   prometheus:
     image: quay.io/prometheus/prometheus:${PROMETHEUS_VERSION:-v3.16.0}
     restart: unless-stopped

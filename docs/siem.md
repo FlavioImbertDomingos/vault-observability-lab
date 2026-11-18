@@ -1,6 +1,6 @@
 # SIEM: Wazuh
 
-[Back to README](../README.md) · [Access](access.md) · [Architecture](architecture.md) · [Metrics](metrics.md) · [Upgrades](upgrades.md) · [Multi-cloud](multicloud.md) · [Terraform](terraform.md) · [Exercises](exercises.md)
+[Back to README](../README.md) · [Access](access.md) · [Architecture](architecture.md) · [Metrics](metrics.md) · [Upgrades](upgrades.md) · [Multi-cloud](multicloud.md) · [Terraform](terraform.md) · [OIDC](oidc.md) · [Exercises](exercises.md)
 
 ![Wazuh Vault SIEM dashboard](img/wazuh-vault-siem.png)
 
@@ -38,6 +38,8 @@ Wazuh's built-in JSON decoder flattens each line, so rules can match fields such
 |---|---|---|---|---|
 | 100110 | 5 | audit | Failed login on any `auth/*/login` path | T1110 |
 | 100111 | 10 | audit | 6 failed logins on the same path in 2 minutes | T1110 |
+| 100112 | 5 | audit | Failed OIDC login (`auth/*/oidc/callback` with an error in the response) | T1110 |
+| 100113 | 10 | audit | 6 failed OIDC logins on the same path in 2 minutes | T1110 |
 | 100120 | 5 | audit | Permission denied (not a login) | |
 | 100121 | 9 | audit | Same identity denied 5 times in 1 minute | T1083 |
 | 100125 | 6 | audit | Rate limit quota exceeded (429) | |
@@ -65,6 +67,7 @@ These came out of testing the rules against real Vault 1.19 logs:
 - `sys/step-down` writes only a `request` line and no response, so the step-down is detected from the server log (`stepping down from active operation to standby`).
 - Requests rejected by a rate limit quota produce only a `request` line, and only when `enable_rate_limit_audit_logging=true` is set on `sys/quotas/config`.
 - Vault 1.13+ locks a userpass user out after 5 failures in 15 minutes by default. The lockout only shows in the server log (`login attempts exceeded, user is locked out`) and in the `vault_core_locked_users` metric.
+- A failed OIDC login is different from a failed userpass login: the path is `auth/oidc/oidc/callback` and the reason is in `response.data.error` (HMAC-hashed), with no top-level `error`. Rule 100110 cannot see it, hence 100112 and 100113. Check a suspected reason with `vault write sys/audit-hash/file input='<message>'` (tested with Vault 2.0.4, see [oidc.md](oidc.md)).
 - When several child rules match one event, Wazuh keeps the highest level. The levels are set so the more specific finding wins: a policy change made with a root token shows as a policy change (9), not as root token use (8).
 - The Vault CLI makes preflight calls to `sys/internal/ui/mounts/*`. Rule 100130 skips them so root token use is not counted twice.
 
