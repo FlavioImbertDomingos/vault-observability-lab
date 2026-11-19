@@ -124,6 +124,93 @@ This is the same problem in production when an IdP is reached through different 
 - To learn why a particular login failed, hash the suspected message and compare: `vault write sys/audit-hash/file input='failed to fetch groups: "groups" claim not found in token'`.
 - `claim_mappings` takes a map. Passed on the CLI as `claim_mappings="a=b,c=d"` it becomes one odd key; send JSON as above.
 
+## Keycloak, group claims, and how Entra ID differs
+
+### What Keycloak is
+
+Keycloak is an open source identity provider maintained by Red Hat (the base of Red Hat build of Keycloak). It speaks OIDC and SAML, stores users itself or federates them from LDAP and Active Directory, and can broker logins from other providers such as Entra ID, Google or GitHub. Companies run it themselves, often when they want one identity layer across clouds and on-premises systems, or when they cannot depend on a SaaS provider.
+
+The objects that matter for Vault:
+
+| Keycloak object | In this lab | Role in the Vault login |
+|---|---|---|
+| Realm | `lab` | One tenant: its own users, groups, clients and signing keys. The issuer URL ends in `/realms/lab` |
+| Client | `vault` (confidential, client secret) | The application Vault logs in as; holds the allowed redirect URIs. Its ID is the token audience Vault checks |
+| Groups | `vault-admins`, `vault-readers` | Membership becomes the `groups` claim |
+| Protocol mapper | `groups` (Group Membership) | Decides which claim holds what, and in which token |
+| Client scopes | `profile`, `email`, `roles` | Bundles of mappers; Vault asks for `profile` and `email` through `oidc_scopes` |
+
+### What a group claim is
+
+A claim is one field in the signed ID token. The group claim lists the groups the user belongs to, and Vault's role names that field with `groups_claim`. For olivia the lab's token carries, among others:
+
+```json
+{
+  "iss": "http://keycloak:8180/realms/lab",
+  "aud": "vault",
+  "preferred_username": "olivia",
+  "email": "olivia@vault-lab.local",
+  "groups": ["vault-admins"]
+}
+```
+
+At login Vault reads `groups`, looks for a group alias with that exact name on the `oidc/` mount, and adds the policies of the external group behind the alias. The match is a plain string comparison, so whatever format the IdP writes into the claim is the format the alias names must use. That one rule explains most group-mapping failures, with any provider.
+
+### Group claims in Keycloak: what we tested
+
+The Group Membership mapper has a "Full group path" switch, off in this lab:
+
+| Setting | User in `vault-admins` | User in subgroup `vault-admins/payments` |
+|---|---|---|
+| Full path off | `["vault-admins"]` | `["payments"]` |
+| Full path on | `["/vault-admins"]` | `["/vault-admins/payments"]` |
+
+Three things came out of trying it:
+
+- A subgroup member gets only the subgroup's name. With full path off, a user in `vault-admins/payments` arrives as `payments` and does not get `secrets-admin`, even though Keycloak treats `payments` as part of `vault-admins` for its own role inheritance. Give the subgroup its own alias, or put the user in the parent group too.
+- With full path off, two subgroups with the same name under different parents (`team-a/admins`, `team-b/admins`) both arrive as `admins`, and Vault cannot tell them apart. Full path avoids that, which is why it is the safer choice for anything larger than a lab.
+- Switching the setting renames every group in the claim. When we turned full path on, olivia's next login came in as `/vault-admins`, matched no alias, and she lost `secrets-admin` without any error. Change the aliases in the same change window.
+
+Keycloak can also send roles instead of groups. Realm roles go into a nested claim, `realm_access.roles`, and Vault reads nested claims with a JSON pointer: `groups_claim="/realm_access/roles"`. Keycloak's default `roles` scope puts that claim only in the access token, not in the ID token Vault reads, so the first login failed with `"/realm_access/roles" claim not found in token`. After turning on "Add to ID token" for the realm roles mapper, the login worked. Groups or roles are both fine; pick one and use it consistently.
+
+A user with no groups gets no `groups` claim at all, and Vault refuses the login (nora, above).
+
+### How Entra ID differs
+
+The Vault side is the same auth method with the same external groups. What changes is what Entra ID puts in the token and what you have to configure to get it there:
+
+| | Keycloak (this lab) | Entra ID |
+|---|---|---|
+| Issuer / discovery URL | `http://keycloak:8180/realms/lab` | `https://login.microsoftonline.com/<tenant-id>/v2.0` |
+| Where the app is defined | Client in a realm | App registration (and an enterprise application) in a tenant |
+| Groups claim | Opt in with a mapper; group names | Opt in under Token configuration, "Add groups claim"; group object IDs (GUIDs) by default |
+| Group alias names in Vault | `vault-admins` | The group's object ID, for example `5f2a...-...-9c1d` |
+| Readable names | Always | `sAMAccountName` only for groups synced from on-prem AD; cloud-only groups can be sent by display name only when the claim is limited to groups assigned to the application |
+| Which groups are sent | Every group the user is a direct member of | Your choice: security groups, directory roles, all groups, or only groups assigned to the application |
+| Nested groups | Not expanded: a subgroup member gets only the subgroup | Expanded: groups the user belongs to through nesting are included (and count toward the limit) |
+| Many groups | No limit in the token | Over 200 groups the list is left out of the token (Entra adds an overage indicator) and Vault must fetch them from Microsoft Graph, through `provider_config` with `provider = "azure"` (the app needs the delegated `User.Read` permission with admin consent, and the role `oidc_scopes` `https://graph.microsoft.com/.default profile`) |
+| Role-based alternative | Realm or client roles, `/realm_access/roles` | App roles, `roles` claim (`groups_claim="roles"`): defined on the app, assigned to users or groups, readable names, no overage problem |
+| Stable user ID for `user_claim` | `sub` (a UUID) | `oid` (same in every app of the tenant); `sub` is different for each app; `preferred_username` and `upn` can change |
+| Client credential | Client secret, no expiry by default | Client secret with an expiry (the portal offers 2 years at most), so rotation has to be tracked; Vault's OIDC config takes a client secret |
+| Redirect URIs | Any URL you list | HTTPS required, except `http://localhost` |
+| Who runs it | You (container, database, upgrades, signing keys) | Microsoft (SaaS), with Conditional Access and MFA in front of the login |
+
+In practice, for Entra ID:
+
+1. Prefer app roles or "groups assigned to the application". Both keep the token small, avoid the 200-group overage, and give names you can read in Vault.
+2. If you use group object IDs, name the Vault external group after the team and put the GUID only in the alias, so policies and audit logs stay readable:
+
+   ```bash
+   vault write identity/group/name/vault-admins type=external policies=secrets-admin
+   vault write identity/group-alias name="5f2a0c1e-...-9c1d" \
+     mount_accessor=$ACCESSOR canonical_id=$(vault read -field=id identity/group/name/vault-admins)
+   ```
+
+3. Use `"user_claim": "oid"` and keep the readable name in `claim_mappings` (`"preferred_username": "username"`).
+4. Put the client secret's expiry date in your calendar or rotate it with automation; an expired secret stops every OIDC login.
+
+Keycloak in front of Entra ID is also a common pattern: Keycloak brokers the Entra ID login, then issues its own token with group names it controls. Vault only ever sees Keycloak, and moving to another upstream provider does not touch Vault.
+
 ## Using another provider
 
 Only `oidc_discovery_url`, the client ID and secret, and the group claim change:
@@ -131,14 +218,16 @@ Only `oidc_discovery_url`, the client ID and secret, and the group claim change:
 | Provider | `oidc_discovery_url` | Groups |
 |---|---|---|
 | Keycloak | `https://<host>/realms/<realm>` | Group Membership mapper, claim `groups` |
-| Entra ID | `https://login.microsoftonline.com/<tenant-id>/v2.0` | `groups` claim with group object IDs; alias names are the IDs; over 200 groups Entra sends an overage claim instead |
+| Entra ID | `https://login.microsoftonline.com/<tenant-id>/v2.0` | `groups` claim with group object IDs, or app roles in `roles`; see the comparison above |
 | Okta | `https://<org>.okta.com` or `https://<org>.okta.com/oauth2/<server-id>` | groups claim rule on the authorization server |
 | Google | `https://accounts.google.com` | no groups claim; map users individually or use Google Workspace groups through the Vault plugin's `provider_config` |
 
-For Entra ID add `"oidc_scopes": ["https://graph.microsoft.com/.default", "profile"]` only when using `provider_config` to fetch groups from Microsoft Graph; with fewer than 200 groups the claim in the token is enough.
+For Entra ID, `provider_config` and the Graph scope are needed only when users can exceed the 200-group limit; below it, the claim in the token is enough.
 
 ## Sources
 
 - [Vault JWT/OIDC auth method](https://developer.hashicorp.com/vault/docs/auth/jwt) and [OIDC provider setup guides](https://developer.hashicorp.com/vault/docs/auth/jwt/oidc-providers)
 - [Vault identity: external groups](https://developer.hashicorp.com/vault/docs/secrets/identity#external-vs-internal-groups)
 - [Keycloak: importing a realm](https://www.keycloak.org/server/importExport) and [hostname configuration](https://www.keycloak.org/server/hostname)
+- [Microsoft identity platform: configure group claims](https://learn.microsoft.com/entra/identity/hybrid/connect/how-to-connect-fed-group-claims) and [ID token claims reference](https://learn.microsoft.com/entra/identity-platform/id-token-claims-reference)
+- [Vault: Azure AD (Entra ID) setup with `provider_config`](https://developer.hashicorp.com/vault/docs/auth/jwt/oidc-providers/azuread)
