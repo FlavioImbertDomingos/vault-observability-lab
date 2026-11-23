@@ -178,6 +178,44 @@ services:
       timeout: 3s
       retries: 60
 
+  # IaC pipeline (./lab.sh iac up). Terraform state for terraform/lab lives in Postgres
+  # (backend "pg", with locking). The GitHub Actions runner runs pipeline jobs on this
+  # network, so they reach vault-1 and tfstate by name.
+  tfstate:
+    image: postgres:${POSTGRES_VERSION:-17-alpine}
+    profiles: [iac]
+    environment:
+      POSTGRES_USER: terraform
+      POSTGRES_PASSWORD: ${TFSTATE_DB_PASSWORD:-terraform-lab}
+      POSTGRES_DB: tfstate
+    volumes:
+      - tfstate-data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${TFSTATE_PORT:-5433}:5432"   # for terraform on this machine (plan only)
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "terraform", "-d", "tfstate"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  gh-runner:
+    image: ghcr.io/actions/actions-runner:${RUNNER_VERSION:-2.338.2}
+    profiles: [iac]
+    entrypoint: ["/bin/bash", "/iac/runner-entrypoint.sh"]
+    environment:
+      GITHUB_REPO: ${GITHUB_REPO:-FlavioImbertDomingos/vault-observability-lab}
+      RUNNER_TOKEN: ${RUNNER_TOKEN:-}
+      RUNNER_NAME: ${RUNNER_NAME:-vault-lab}
+      VAULT_ADDR: http://vault-1:8200
+      PG_CONN_STR: postgres://terraform:${TFSTATE_DB_PASSWORD:-terraform-lab}@tfstate:5432/tfstate?sslmode=disable
+    volumes:
+      - ./iac/runner-entrypoint.sh:/iac/runner-entrypoint.sh:ro
+      - gh-runner:/home/runner      # registration and tool cache survive restarts
+    depends_on:
+      tfstate:
+        condition: service_healthy
+    restart: unless-stopped
+
   prometheus:
     image: quay.io/prometheus/prometheus:${PROMETHEUS_VERSION:-v3.16.0}
     restart: unless-stopped
@@ -317,6 +355,8 @@ services:
 
 volumes:
   vault-audit:
+  tfstate-data:
+  gh-runner:
   vaultb-audit:
   vaultb-1-data:
   vaultb-2-data:

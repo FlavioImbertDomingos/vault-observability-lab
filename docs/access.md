@@ -1,6 +1,6 @@
 # Accessing Vault
 
-[Back to README](../README.md) · [Architecture](architecture.md) · [Upgrades](upgrades.md) · [Multi-cloud](multicloud.md) · [Terraform](terraform.md) · [OIDC](oidc.md) · [Exercises](exercises.md) · [Troubleshooting](troubleshooting.md)
+[Back to README](../README.md) · [Architecture](architecture.md) · [Upgrades](upgrades.md) · [Multi-cloud](multicloud.md) · [Terraform](terraform.md) · [IaC pipeline](iac.md) · [OIDC](oidc.md) · [Exercises](exercises.md) · [Troubleshooting](troubleshooting.md)
 
 Each node has its own port on your machine, so you can reach any of them directly:
 

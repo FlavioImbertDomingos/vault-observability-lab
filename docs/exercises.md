@@ -1,8 +1,8 @@
 # Exercises
 
-[Back to README](../README.md) · [Multi-cloud](multicloud.md) · [Terraform](terraform.md) · [OIDC](oidc.md) · [Access](access.md) · [Architecture](architecture.md) · [Metrics](metrics.md) · [SIEM](siem.md)
+[Back to README](../README.md) · [Multi-cloud](multicloud.md) · [Terraform](terraform.md) · [IaC pipeline](iac.md) · [OIDC](oidc.md) · [Access](access.md) · [Architecture](architecture.md) · [Metrics](metrics.md) · [SIEM](siem.md)
 
-Each exercise lists what to run and what you should see. Most map to Vault Operations Advanced objectives: monitoring (2), fault tolerance (4), performance (6), access control (7). Exercises 10 and 11 cover Terraform with Vault, exercise 12 OIDC logins.
+Each exercise lists what to run and what you should see. Most map to Vault Operations Advanced objectives: monitoring (2), fault tolerance (4), performance (6), access control (7). Exercises 10 and 11 cover Terraform with Vault, exercise 12 OIDC logins, exercise 13 the approval pipeline.
 
 Set this once in your shell:
 
@@ -130,6 +130,10 @@ vault kv put secret/team/x a=b  # 403: oscar is in vault-readers
 
 Now, in the Keycloak admin console (http://keycloak:8180, admin / admin, realm lab), add oscar to `vault-admins`, log in again and repeat the `kv put`: it works, and nothing changed in Vault. Then log in as nora (no group) and read the refusal. Finally fail six logins in a row and find rules 100112 and 100113 in Wazuh, then use `sys/audit-hash/file` to prove which error message the hashed `response.data.error` holds. See [oidc.md](oidc.md).
 
-## 13. Write your own detection
+## 13. Change Vault only through a pull request
+
+Set up the pipeline ([iac.md](iac.md), steps 1 to 6), then add a team to `terraform/lab/teams.tf` on a branch, read the plan on the pull request, merge, and approve the `lab` deployment. Then try the three ways around it and watch each fail: `./lab.sh tf lab apply` on your laptop (403), a team with `token_ttl = 86400` (plan fails), and a policy changed by hand with the root token (the drift run opens an issue). Finally find the apply job's requests in the Vault audit log by run id.
+
+## 14. Write your own detection
 
 Add a rule that alerts when someone reads `secret/data/admin/break-glass` successfully, test it with `wazuh-logtest`, restart the manager and trigger it with the root token.

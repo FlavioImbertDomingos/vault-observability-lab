@@ -1,0 +1,217 @@
+# Vault configuration as code for the lab (terraform/lab).
+#   pull request -> checks on a GitHub-hosted runner, plan on the lab runner, plan posted as a comment
+#   merge to main -> plan again, wait for approval (environment "lab"), apply that exact plan
+#   every night  -> drift check: open an issue if Vault no longer matches the code
+# The lab jobs run on the self-hosted runner (label vault-lab) inside the lab's Docker
+# network. See docs/iac.md.
+name: vault-iac
+
+on:
+  pull_request:                # every pull request, so the required checks always report
+  push:
+    branches: [main]
+    paths: ["terraform/lab/**", ".github/workflows/vault-iac.yml", ".github/actions/vault-login/**"]
+  schedule:
+    - cron: "17 13 * * *"   # 06:17 in Phoenix
+  workflow_dispatch:           # "Run workflow" button
+    inputs:
+      mode:
+        description: "apply = plan main and apply after approval, drift = drift check only"
+        type: choice
+        options: [apply, drift]
+        default: apply
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vault-iac-lab        # one run against the lab at a time
+  cancel-in-progress: false
+
+env:
+  TF_DIR: terraform/lab
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  TF_VERSION: "~1.17.0"
+
+jobs:
+  checks:
+    name: fmt, validate, lint
+    runs-on: ubuntu-latest       # GitHub-hosted: no access to the lab, safe for any pull request
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      - run: terraform -chdir=$TF_DIR fmt -check -recursive
+      - run: terraform -chdir=$TF_DIR init -backend=false
+      - run: terraform -chdir=$TF_DIR validate
+      - uses: terraform-linters/setup-tflint@v4
+      - run: tflint --recursive
+        working-directory: ${{ env.TF_DIR }}
+
+  plan-pr:
+    name: plan (pull request)
+    needs: checks
+    # Only branches of this repository reach the lab runner, never pull requests from forks.
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, vault-lab]
+    permissions:
+      contents: read
+      id-token: write          # lets the job request its GitHub OIDC token
+      pull-requests: write     # to post the plan
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+      - uses: ./.github/actions/vault-login
+        with:
+          role: terraform-plan
+      - run: terraform -chdir=$TF_DIR init
+      - name: terraform plan
+        id: plan
+        run: |
+          set +e
+          terraform -chdir=$TF_DIR plan -no-color -lock-timeout=60s -detailed-exitcode -out=tfplan > plan.txt 2>&1
+          code=$?
+          cat plan.txt
+          echo "exitcode=$code" >> "$GITHUB_OUTPUT"
+          [ $code -eq 1 ] && exit 1 || exit 0
+      - name: Post the plan on the pull request
+        uses: actions/github-script@v7
+        env:
+          EXITCODE: ${{ steps.plan.outputs.exitcode }}
+        with:
+          script: |
+            const fs = require('fs');
+            let plan = fs.readFileSync('plan.txt', 'utf8');
+            const max = 60000;
+            if (plan.length > max) plan = plan.slice(-max) + '\n(truncated, full plan in the job log)';
+            const summary = process.env.EXITCODE === '2' ? 'changes to apply after merge and approval'
+                          : process.env.EXITCODE === '0' ? 'no changes' : 'plan failed';
+            const marker = '<!-- vault-iac-plan -->';
+            const body = `${marker}\n### terraform/lab plan: ${summary}\n` +
+              `Commit ${context.sha.substring(0,7)}, run [${context.runId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})\n\n` +
+              '<details><summary>Show plan</summary>\n\n```\n' + plan + '\n```\n</details>';
+            const { data: comments } = await github.rest.issues.listComments({ ...context.repo, issue_number: context.issue.number });
+            const old = comments.find(c => c.body.includes(marker));
+            if (old) await github.rest.issues.updateComment({ ...context.repo, comment_id: old.id, body });
+            else await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });
+      - name: Revoke the Vault token
+        if: always()
+        run: |
+          curl -sS -X POST -H "X-Vault-Token: $VAULT_TOKEN" "$VAULT_ADDR/v1/auth/token/revoke-self" || true
+
+  plan-main:
+    name: plan (main)
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'apply')
+    runs-on: [self-hosted, vault-lab]
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      changes: ${{ steps.plan.outputs.changes }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+      - uses: ./.github/actions/vault-login
+        with:
+          role: terraform-plan
+      - run: terraform -chdir=$TF_DIR init
+      - name: terraform plan
+        id: plan
+        run: |
+          set +e
+          terraform -chdir=$TF_DIR plan -no-color -lock-timeout=60s -detailed-exitcode -out=tfplan > plan.txt 2>&1
+          code=$?
+          cat plan.txt
+          [ $code -eq 1 ] && exit 1
+          echo "changes=$([ $code -eq 2 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          # The plan file stays on the lab runner. It is not uploaded as an artifact,
+          # which anyone could download from a public repository. The apply job uses it.
+          mkdir -p "$HOME/plans" && cp "$TF_DIR/tfplan" "$HOME/plans/$GITHUB_RUN_ID.tfplan"
+          { echo "### Plan for commit ${GITHUB_SHA::7}"; echo '```'; tail -c 60000 plan.txt; echo '```';
+            echo "Approve the **lab** deployment to apply exactly this plan."; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Revoke the Vault token
+        if: always()
+        run: |
+          curl -sS -X POST -H "X-Vault-Token: $VAULT_TOKEN" "$VAULT_ADDR/v1/auth/token/revoke-self" || true
+
+  apply:
+    name: apply (after approval)
+    needs: plan-main
+    if: needs.plan-main.outputs.changes == 'true'
+    runs-on: [self-hosted, vault-lab]
+    environment: lab             # required reviewers: the job waits here until someone approves
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+      - uses: ./.github/actions/vault-login
+        with:
+          role: terraform-apply  # only this job (main + environment lab) can get write access
+      - run: terraform -chdir=$TF_DIR init
+      - name: terraform apply (the approved plan)
+        # A saved plan refuses to apply if the state changed since it was made.
+        run: terraform -chdir=$TF_DIR apply -no-color -lock-timeout=60s "$HOME/plans/$GITHUB_RUN_ID.tfplan"
+      - name: Clean up
+        if: always()
+        run: |
+          rm -f "$HOME/plans/$GITHUB_RUN_ID.tfplan"
+          curl -sS -X POST -H "X-Vault-Token: $VAULT_TOKEN" "$VAULT_ADDR/v1/auth/token/revoke-self" || true
+
+  drift:
+    name: drift check
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'drift')
+    runs-on: [self-hosted, vault-lab]
+    permissions:
+      contents: read
+      id-token: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+      - uses: ./.github/actions/vault-login
+        with:
+          role: terraform-plan
+      - run: terraform -chdir=$TF_DIR init
+      - name: terraform plan -detailed-exitcode
+        id: plan
+        run: |
+          set +e
+          terraform -chdir=$TF_DIR plan -no-color -lock-timeout=60s -detailed-exitcode > plan.txt 2>&1
+          code=$?
+          cat plan.txt
+          echo "exitcode=$code" >> "$GITHUB_OUTPUT"
+          [ $code -eq 1 ] && exit 1 || exit 0
+      - name: Open an issue when Vault drifted from the code
+        if: steps.plan.outputs.exitcode == '2'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('plan.txt', 'utf8').slice(-60000);
+            const { data: open } = await github.rest.issues.listForRepo({ ...context.repo, state: 'open', labels: 'drift' });
+            const body = `The nightly plan found changes made outside the pipeline.\n` +
+              `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}\n\n` +
+              'Either put the change into terraform/lab with a pull request, or run the workflow manually (Run workflow) to plan and, after approval, put Vault back.\n\n' +
+              '```\n' + plan + '\n```';
+            if (open.length) await github.rest.issues.createComment({ ...context.repo, issue_number: open[0].number, body });
+            else await github.rest.issues.create({ ...context.repo, title: 'Drift detected in terraform/lab', labels: ['drift'], body });
+      - name: Revoke the Vault token
+        if: always()
+        run: |
+          curl -sS -X POST -H "X-Vault-Token: $VAULT_TOKEN" "$VAULT_ADDR/v1/auth/token/revoke-self" || true

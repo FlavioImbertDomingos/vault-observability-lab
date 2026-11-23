@@ -38,7 +38,7 @@ jobs:
 
       - name: Terraform
         run: |
-          for d in multicloud state-secrets adopt; do
+          for d in multicloud state-secrets adopt lab; do
             echo "== terraform/$d"
             docker run --rm -v "$PWD/terraform/$d:/work" -w /work hashicorp/terraform:1.17 fmt -check -recursive
             docker run --rm -v "$PWD/terraform/$d:/work" -w /work --entrypoint sh hashicorp/terraform:1.17 \

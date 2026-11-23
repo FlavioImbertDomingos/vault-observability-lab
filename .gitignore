@@ -16,3 +16,6 @@ terraform/adopt/generated-*.tf
 terraform/adopt/policies.tf
 terraform/adopt/policies/
 .DS_Store
+# pipeline plan files
+terraform/lab/tfplan
+*.tfplan

@@ -18,9 +18,10 @@ Interactive 3D view: [`docs/index.html`](docs/index.html) (rotate, zoom, click a
 | Traffic | Load generator (logins, KV, transit, tokens, quota bursts) and `./lab.sh incident` |
 | Upgrades | `./lab.sh upgrade <version>`: rolling upgrade, standbys first, active node last, snapshot and health gates; an Ansible playbook for real servers |
 | Multi-cloud | `./lab.sh multicloud up` adds a second independent cluster; Terraform applies one baseline to both and detects drift; Grafana and Wazuh show both |
+| IaC pipeline | Vault configuration changes only through pull requests: GitHub Actions plans on a self-hosted runner in the lab, a reviewer approves, the pipeline applies; jobs log in to Vault with GitHub OIDC tokens; nightly drift check |
 | OIDC | `./lab.sh oidc up` adds Keycloak; people log in with `vault login -method=oidc` or the UI, and their Keycloak group decides their Vault policies |
 | Terraform | Runs with its own least-privilege policy and a 30-minute token, never root; a demo of secrets in state next to ephemeral resources and write-only arguments; a staged exercise that imports hand-made config |
-| Docs | [Accessing Vault](docs/access.md), [Multi-cloud](docs/multicloud.md), [Terraform](docs/terraform.md), [OIDC](docs/oidc.md), [Architecture](docs/architecture.md), [Metrics](docs/metrics.md), [SIEM](docs/siem.md), [Upgrades](docs/upgrades.md), [Exercises](docs/exercises.md), [Troubleshooting](docs/troubleshooting.md) |
+| Docs | [Accessing Vault](docs/access.md), [Multi-cloud](docs/multicloud.md), [Terraform](docs/terraform.md), [IaC pipeline](docs/iac.md), [OIDC](docs/oidc.md), [Architecture](docs/architecture.md), [Metrics](docs/metrics.md), [SIEM](docs/siem.md), [Upgrades](docs/upgrades.md), [Exercises](docs/exercises.md), [Troubleshooting](docs/troubleshooting.md) |
 
 ## Screenshots
 
@@ -77,6 +78,9 @@ Less memory? `./lab.sh core` runs Vault, Prometheus and Grafana only (about 1 GB
 | `./lab.sh secrets-check` | Show which resources hold the demo password in state |
 | `./lab.sh tf adopt plan` | Exercise: import hand-made config into Terraform in stages |
 | `./lab.sh oidc up` | Start Keycloak and configure OIDC logins in Vault |
+| `./lab.sh iac up` | State database, Vault bootstrap and runner for the pull-request pipeline |
+| `./lab.sh iac runner <token>` | Register the self-hosted GitHub Actions runner |
+| `./lab.sh tf lab plan` | Plan the pipeline-owned configuration locally (read only; apply is refused) |
 | `./lab.sh token b` | Root token of cloud-b |
 | `./lab.sh down` | Stop, keep data |
 | `./lab.sh reset` | Delete all data, secrets and certificates |
@@ -169,6 +173,20 @@ Terraform never gets the root token: each `./lab.sh tf` run hands it a 30-minute
 
 `sensitive = true` only hides a value on screen. Ephemeral resources (Terraform 1.10) and write-only arguments (1.11) keep it out of `terraform.tfstate`; the demo shows both, including an AppRole SecretID that never reaches state. `terraform/adopt/` brings config that was created by hand under Terraform in five stages with `import` blocks and `-generate-config-out`, lowest risk first. Results, what broke along the way and the rules we kept: [docs/terraform.md](docs/terraform.md).
 
+## Configuration as code with approval
+
+Nobody changes `terraform/lab` in Vault by hand. A change is a pull request: GitHub checks it, a job on a runner inside the lab posts the Terraform plan on the pull request, and after the merge the apply waits until a reviewer approves the `lab` environment.
+
+![Pipeline](docs/img/iac-arch.png)
+
+- Jobs log in to Vault with the GitHub OIDC token of the job. No Vault credential is stored in GitHub.
+- A plan gets a read-only policy. Only a job on `main` in the approved `lab` environment can get the write policy; a pull request or another branch is refused by Vault itself.
+- The apply job applies the saved plan the reviewer read; if anything changed in between, Terraform refuses it.
+- Terraform state lives in a Postgres container with locking. On your laptop, `./lab.sh tf lab plan` works and `apply` gets 403.
+- A nightly job plans against Vault and opens a `drift` issue when someone changed it by hand. The Vault audit log shows the GitHub user, commit and run id behind every pipeline change.
+
+Setup in 8 steps (GitHub environment, runner registration, branch ruleset), the exercises and the enterprise mapping: [docs/iac.md](docs/iac.md).
+
 ## OIDC logins with Keycloak
 
 ```bash
@@ -187,7 +205,7 @@ Testing it turned up two things: a user in no group cannot log in at all (Keyclo
 
 ## Exercises
 
-Failover, incident response, rate limits, lease growth, Raft quorum, audit HMAC search, planned leader change, rolling upgrade, multi-cloud drift, secrets in Terraform state, adopting hand-made config, OIDC logins, writing your own detection. See [docs/exercises.md](docs/exercises.md).
+Failover, incident response, rate limits, lease growth, Raft quorum, audit HMAC search, planned leader change, rolling upgrade, multi-cloud drift, secrets in Terraform state, adopting hand-made config, the approval pipeline, OIDC logins, writing your own detection. See [docs/exercises.md](docs/exercises.md).
 
 ## Lab only
 
@@ -197,6 +215,7 @@ This is a learning environment. Do not copy these settings to production:
 - One unseal key, threshold 1, root token stored in `secrets/init.json` (git-ignored).
 - Wazuh uses its stock demo passwords and a self-signed CA generated by `wazuh/gen-certs.sh`.
 - Wazuh vulnerability detection is off (its feed is about 8 GB).
+- The pipeline's state database uses a fixed password and listens on 127.0.0.1 only.
 - Keycloak runs in development mode over HTTP with an admin / admin login and a fixed client secret.
 
 ## Versions

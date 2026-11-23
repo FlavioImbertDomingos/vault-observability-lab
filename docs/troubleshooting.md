@@ -1,6 +1,6 @@
 # Troubleshooting
 
-[Back to README](../README.md) · [Multi-cloud](multicloud.md) · [Terraform](terraform.md) · [OIDC](oidc.md) · [Access](access.md)
+[Back to README](../README.md) · [Multi-cloud](multicloud.md) · [Terraform](terraform.md) · [IaC pipeline](iac.md) · [OIDC](oidc.md) · [Access](access.md)
 
 | Symptom | Fix |
 |---|---|

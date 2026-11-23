@@ -15,6 +15,7 @@
 #   ./lab.sh tf state-secrets|adopt ...  Terraform demos (secrets in state, importing existing config)
 #   ./lab.sh secrets-check               which Terraform resources hold the demo password in state
 #   ./lab.sh oidc up|down|status         Keycloak as OIDC provider, Vault logins mapped from its groups
+#   ./lab.sh iac up|runner|status|down   GitHub Actions pipeline for terraform/lab (plan, approve, apply)
 #   ./lab.sh token b    print the root token of cloud-b
 #   ./lab.sh down       stop (keeps data)
 #   ./lab.sh reset      stop and delete ALL data, secrets and Wazuh certs
@@ -82,7 +83,10 @@ CORE_PORTS="VAULT_PORT VAULT2_PORT VAULT3_PORT PROMETHEUS_PORT GRAFANA_PORT"
 VAULTB1_PORT=${VAULTB1_PORT:-8300}; VAULTB2_PORT=${VAULTB2_PORT:-8310}; VAULTB3_PORT=${VAULTB3_PORT:-8320}
 B_PORTS="VAULTB1_PORT VAULTB2_PORT VAULTB3_PORT"
 B_SERVICES="vaultb-1 vaultb-2 vaultb-3 vaultb-init loadgen-b"
-MC="docker compose --profile multicloud --profile oidc"   # down/reset cover every profile
+MC="docker compose --profile multicloud --profile oidc --profile iac"   # down/reset cover every profile
+IAC="docker compose --profile iac"
+TFSTATE_PORT=${TFSTATE_PORT:-5433}
+GITHUB_REPO=${GITHUB_REPO:-FlavioImbertDomingos/vault-observability-lab}
 KEYCLOAK_PORT=${KEYCLOAK_PORT:-8180}
 OIDC="docker compose --profile oidc"
 
@@ -160,20 +164,67 @@ oidc() {
   esac
 }
 
+# ------------------------------------------------------------ IaC pipeline
+iac() {
+  case "${1:-}" in
+    up)
+      [ -n "$(root_token)" ] || { echo "cloud-a is not initialized. Run: ./lab.sh up"; exit 1; }
+      check_ports TFSTATE_PORT
+      $IAC up -d tfstate
+      printf "Waiting for the state database"
+      local i
+      for i in $(seq 1 60); do
+        [ "$(docker inspect -f '{{.State.Health.Status}}' "$($IAC ps -q tfstate)" 2>/dev/null)" = healthy ] && break
+        printf "."; sleep 2
+      done; echo
+      echo "Bootstrapping Vault for $GITHUB_REPO:"
+      docker compose cp terraform/terraform-policy.hcl vault-1:/tmp/terraform-policy.hcl >/dev/null 2>&1
+      docker compose cp iac/terraform-plan-policy.hcl vault-1:/tmp/terraform-plan-policy.hcl >/dev/null 2>&1
+      docker compose exec -T -e VAULT_TOKEN="$(root_token)" -e GITHUB_REPO="$GITHUB_REPO" \
+        -e JWT_VALIDATION_PUBKEY="${JWT_VALIDATION_PUBKEY:-}" vault-1 sh -s < iac/bootstrap-vault.sh
+      if $IAC run --rm --no-deps --entrypoint test gh-runner -f /home/runner/.runner >/dev/null 2>&1; then
+        $IAC up -d gh-runner; echo "Runner started (already registered)."
+      else
+        echo
+        echo "Next: register the runner. In GitHub: Settings > Actions > Runners > New self-hosted runner,"
+        echo "copy the token from the ./config.sh line, then run: ./lab.sh iac runner <token>"
+        echo "(or with the GitHub CLI: ./lab.sh iac runner \$(gh api -X POST repos/$GITHUB_REPO/actions/runners/registration-token -q .token))"
+      fi ;;
+    runner)
+      [ -n "${2:-}" ] || { echo "Usage: ./lab.sh iac runner <registration-token>"; exit 1; }
+      RUNNER_TOKEN="$2" $IAC up -d gh-runner
+      printf "Registering"
+      local i
+      for i in $(seq 1 60); do
+        $IAC logs gh-runner 2>&1 | grep -q "Listening for Jobs" && { echo; echo "Runner online: GitHub > Settings > Actions > Runners shows vault-lab as Idle."; return; }
+        $IAC logs gh-runner 2>&1 | grep -qiE "error|failed" && break
+        printf "."; sleep 2
+      done; echo
+      $IAC logs --tail 20 gh-runner ;;
+    status)
+      $IAC ps tfstate gh-runner
+      $IAC logs --tail 3 gh-runner 2>/dev/null || true ;;
+    down)
+      $IAC stop gh-runner tfstate >/dev/null 2>&1
+      echo "Runner and state database stopped. Data kept; ./lab.sh iac up starts them again." ;;
+    *) echo "Usage: ./lab.sh iac up|runner <token>|status|down"; exit 1 ;;
+  esac
+}
+
 # ------------------------------------------------------------ terraform
 # Terraform does not run as root. Root (the bootstrap credential) writes the
 # "terraform" policy once, then every run gets a fresh 30-minute token with it.
-TF_DIRS="multicloud state-secrets adopt"
+TF_DIRS="multicloud state-secrets adopt lab"
 
-tf_token() {   # tf_token a|b  -> short-lived token with the terraform policy
-  local svc=vault-1 tok mc="docker compose"
+tf_token() {   # tf_token a|b [plan]  -> short-lived token with the terraform (or terraform-plan) policy
+  local svc=vault-1 tok mc="docker compose" pol=terraform file=terraform/terraform-policy.hcl
   tok=$(root_token)
   if [ "$1" = "b" ]; then svc=vaultb-1; tok=$(root_token_b); mc=$MC; fi
+  if [ "${2:-}" = "plan" ]; then pol=terraform-plan; file=iac/terraform-plan-policy.hcl; fi
   [ -n "$tok" ] || return 0
-  $mc exec -T -e VAULT_TOKEN="$tok" "$svc" vault policy write terraform - \
-    < terraform/terraform-policy.hcl >/dev/null
-  $mc exec -T -e VAULT_TOKEN="$tok" "$svc" vault token create -policy=terraform \
-    -ttl=30m -display-name=terraform -field=token
+  $mc exec -T -e VAULT_TOKEN="$tok" "$svc" vault policy write $pol - < $file >/dev/null
+  $mc exec -T -e VAULT_TOKEN="$tok" "$svc" vault token create -policy=$pol \
+    -ttl=30m -display-name=$pol -field=token
 }
 
 tf() {   # ./lab.sh tf [multicloud|state-secrets|adopt] <terraform args>
@@ -185,17 +236,27 @@ tf() {   # ./lab.sh tf [multicloud|state-secrets|adopt] <terraform args>
   if [ "$name" = multicloud ] && [ -z "$(root_token_b)" ]; then
     echo "cloud-b is not initialized. Run: ./lab.sh multicloud up"; exit 1
   fi
-  local ta tb
-  ta=$(tf_token a); tb=$(tf_token b)
+  local ta tb pg="" pgd=""
+  if [ "$name" = lab ]; then
+    # terraform/lab belongs to the pipeline: on this machine you get a plan-only token,
+    # so "apply" fails with 403. Changes go through a pull request.
+    ta=$(tf_token a plan); tb=""
+    pg="postgres://terraform:${TFSTATE_DB_PASSWORD:-terraform-lab}@localhost:$TFSTATE_PORT/tfstate?sslmode=disable"
+    pgd="postgres://terraform:${TFSTATE_DB_PASSWORD:-terraform-lab}@tfstate:5432/tfstate?sslmode=disable"
+  else
+    ta=$(tf_token a); tb=$(tf_token b 2>/dev/null || true)   # cloud-b may be stopped
+  fi
   if command -v terraform >/dev/null 2>&1; then
     ( cd "$dir"
+      export TF_VAR_cloud_a_token="$ta" TF_VAR_cloud_b_token="$tb" PG_CONN_STR="$pg" \
+        VAULT_ADDR="http://localhost:$VAULT_PORT" VAULT_TOKEN="$ta" \
+        TF_VAR_cloud_a_address="http://localhost:$VAULT_PORT" TF_VAR_cloud_b_address="http://localhost:$VAULTB1_PORT"
       [ -d .terraform ] || terraform init -input=false >/dev/null
-      TF_VAR_cloud_a_token="$ta" TF_VAR_cloud_b_token="$tb" \
-      TF_VAR_cloud_a_address="http://localhost:$VAULT_PORT" TF_VAR_cloud_b_address="http://localhost:$VAULTB1_PORT" \
       terraform "$@" )
   else   # no local Terraform: use the official image on the lab network
     local run="docker run --rm --network vault-lab_default -v $PWD/$dir:/work -w /work \
-      -e TF_VAR_cloud_a_token=$ta -e TF_VAR_cloud_b_token=$tb \
+      -e TF_VAR_cloud_a_token=$ta -e TF_VAR_cloud_b_token=$tb -e PG_CONN_STR=$pgd \
+      -e VAULT_ADDR=http://vault-1:8200 -e VAULT_TOKEN=$ta \
       -e TF_VAR_cloud_a_address=http://vault-1:8200 -e TF_VAR_cloud_b_address=http://vaultb-1:8200 \
       hashicorp/terraform:${TERRAFORM_VERSION:-1.17}"
     [ -d "$dir/.terraform" ] || $run init -input=false >/dev/null
@@ -359,6 +420,8 @@ case "${1:-}" in
     secrets_check ;;
   oidc)
     shift; oidc "$@" ;;
+  iac)
+    shift; iac "$@" ;;
   unseal)
     docker compose up -d --force-recreate vault-init
     docker compose wait vault-init >/dev/null 2>&1 || true
@@ -380,11 +443,11 @@ case "${1:-}" in
     rm -f secrets/init.json secrets/loadgen-token secrets/.seeded
     rm -rf secrets/cloud-b
     echo '[]' > prometheus/targets/cloud-b.json
-    for d in multicloud state-secrets adopt; do
+    for d in multicloud state-secrets adopt lab; do
       rm -rf terraform/$d/.terraform terraform/$d/terraform.tfstate* terraform/$d/generated-*.tf
     done
     rm -rf terraform/adopt/[0-9]-*.tf terraform/adopt/policies.tf terraform/adopt/policies
     rm -rf "$CERTS" ;;
   *)
-    sed -n '2,20p' "$0" ;;
+    sed -n '2,21p' "$0" ;;
 esac

@@ -1,0 +1,6 @@
+# Changes to Vault configuration, the pipeline and detections need a review from the owner.
+/terraform/          @FlavioImbertDomingos
+/iac/                @FlavioImbertDomingos
+/.github/            @FlavioImbertDomingos
+/wazuh/rules/        @FlavioImbertDomingos
+/prometheus/rules/   @FlavioImbertDomingos

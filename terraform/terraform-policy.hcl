@@ -43,3 +43,9 @@ path "platform/data/*"     { capabilities = ["create", "read", "update", "delete
 path "platform/metadata/*" { capabilities = ["read", "delete", "list"] }
 path "tfdemo/data/*"       { capabilities = ["create", "read", "update", "delete"] }
 path "tfdemo/metadata/*"   { capabilities = ["read", "delete", "list"] }
+
+# terraform/lab, applied by the GitHub Actions pipeline (role terraform-apply):
+# one KV mount per team (team-<name>/), team policies and AppRole roles under approle-teams/
+path "sys/mounts/team-*"        { capabilities = ["create", "read", "update", "delete"] }
+path "sys/auth/approle-teams*"  { capabilities = ["create", "read", "update", "delete", "sudo"] }
+path "auth/approle-teams/*"     { capabilities = ["create", "read", "update", "delete", "list"] }
