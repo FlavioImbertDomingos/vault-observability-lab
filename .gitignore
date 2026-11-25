@@ -19,3 +19,5 @@ terraform/adopt/policies/
 # pipeline plan files
 terraform/lab/tfplan
 *.tfplan
+# a runner installed by hand from the GitHub page (never commit: holds runner credentials)
+actions-runner/

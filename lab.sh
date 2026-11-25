@@ -197,10 +197,12 @@ iac() {
       local i
       for i in $(seq 1 60); do
         $IAC logs gh-runner 2>&1 | grep -q "Listening for Jobs" && { echo; echo "Runner online: GitHub > Settings > Actions > Runners shows vault-lab as Idle."; return; }
-        $IAC logs gh-runner 2>&1 | grep -qiE "error|failed" && break
+        # stop waiting only if the container exited (bad or expired token)
+        [ "$(docker inspect -f '{{.State.Running}}' "$($IAC ps -aq gh-runner)" 2>/dev/null)" = true ] || break
         printf "."; sleep 2
       done; echo
-      $IAC logs --tail 20 gh-runner ;;
+      echo "Runner did not report \"Listening for Jobs\". Last lines:"
+      $IAC logs --tail 15 gh-runner 2>&1 | grep -v " INFO " ;;
     status)
       $IAC ps tfstate gh-runner
       $IAC logs --tail 3 gh-runner 2>/dev/null || true ;;
