@@ -21,7 +21,7 @@ Interactive 3D view: [`docs/index.html`](docs/index.html) (rotate, zoom, click a
 | IaC pipeline | Vault configuration changes only through pull requests: GitHub Actions plans on a self-hosted runner in the lab, a reviewer approves, the pipeline applies; jobs log in to Vault with GitHub OIDC tokens; nightly drift check |
 | OIDC | `./lab.sh oidc up` adds Keycloak; people log in with `vault login -method=oidc` or the UI, and their Keycloak group decides their Vault policies |
 | Terraform | Runs with its own least-privilege policy and a 30-minute token, never root; a demo of secrets in state next to ephemeral resources and write-only arguments; a staged exercise that imports hand-made config |
-| Docs | [Accessing Vault](docs/access.md), [Multi-cloud](docs/multicloud.md), [Terraform](docs/terraform.md), [IaC pipeline](docs/iac.md), [OIDC](docs/oidc.md), [Architecture](docs/architecture.md), [Metrics](docs/metrics.md), [SIEM](docs/siem.md), [Upgrades](docs/upgrades.md), [Exercises](docs/exercises.md), [Troubleshooting](docs/troubleshooting.md) |
+| Docs | [Containers](docs/containers.md), [Accessing Vault](docs/access.md), [Multi-cloud](docs/multicloud.md), [Terraform](docs/terraform.md), [IaC pipeline](docs/iac.md), [OIDC](docs/oidc.md), [Architecture](docs/architecture.md), [Metrics](docs/metrics.md), [SIEM](docs/siem.md), [Upgrades](docs/upgrades.md), [Exercises](docs/exercises.md), [Troubleshooting](docs/troubleshooting.md) |
 
 ## Screenshots
 
@@ -120,7 +120,7 @@ flowchart LR
 ```
 
 - Prometheus pulls `/v1/sys/metrics?format=prometheus` from each node directly, so standbys are visible.
-- The file audit device and per-node JSON server logs share one volume that the Wazuh manager reads.
+- Each Vault node writes its audit log and JSON server log to its own volume, and a Wazuh agent per node ships them to the manager over 1514/tcp, as agents on separate Vault hosts would.
 - Normal traffic is decoded at level 0 and never indexed; only findings become alerts.
 
 Details in [docs/architecture.md](docs/architecture.md).

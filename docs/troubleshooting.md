@@ -1,6 +1,6 @@
 # Troubleshooting
 
-[Back to README](../README.md) · [Multi-cloud](multicloud.md) · [Terraform](terraform.md) · [IaC pipeline](iac.md) · [OIDC](oidc.md) · [Access](access.md)
+[Back to README](../README.md) · [Containers](containers.md) · [Multi-cloud](multicloud.md) · [Terraform](terraform.md) · [IaC pipeline](iac.md) · [OIDC](oidc.md) · [Access](access.md)
 
 | Symptom | Fix |
 |---|---|
@@ -18,6 +18,7 @@
 | OIDC: Keycloak says "Invalid parameter: redirect_uri" | The callback URL is not in the Keycloak client. If you changed `VAULT_PORT`, run `./lab.sh oidc down` and `up` so the realm is imported with the new ports. |
 | OIDC: `"groups" claim not found in token` | The user is in no Keycloak group, so Keycloak leaves the claim out. Add the user to `vault-admins` or `vault-readers`. |
 | OIDC: an issuer mismatch or discovery error when Vault validates the token | `oidc_discovery_url` and the URL Keycloak puts in tokens differ. Keycloak is started with `--hostname=http://keycloak:<port>`; keep `KEYCLOAK_PORT` the same for both. |
+| Wazuh shows `permission denied` from the same IP every few seconds | Find the container behind the IP and check the loadgen token: [containers.md](containers.md#example-permission-denied-on-authtokencreate-every-few-seconds). |
 | Docker Hub `429 Too Many Requests` | `docker login`, then try again. |
 | Permission denied running `./lab.sh` | `chmod +x lab.sh vault/scripts/*.sh wazuh/gen-certs.sh` |
 | Start over | `./lab.sh reset` deletes all data, secrets and certificates. |
